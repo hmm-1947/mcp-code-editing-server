@@ -1,2 +1,6 @@
 venv/
 __pycache__/
+.cody_history/
+auth_token.json
+tray_logs/
+dist

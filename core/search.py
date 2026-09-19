@@ -56,8 +56,16 @@ def search(
     globs: list[str] | None = None,
     timeout: int = 120,
 ) -> dict:
-    """Run ripgrep and return {"results": [...], "engine": "rg"|"python"}."""
-    command = ["rg", "--json", "--line-number", "--follow"]
+    """Run ripgrep and return {"results": [...], "engine": "rg"|"python"}.
+
+    Always searches ignore-file-blind (--no-ignore): DEPENDENCY_DIRS is the
+    single source of truth for what gets skipped, not whatever a project's
+    own .gitignore/.ignore says. Respecting a repo's .gitignore here silently
+    breaks search whenever it's broad (a bare "*", or something like
+    "sites/"), which then wrongly leaves the tool reporting no matches from
+    files that plainly exist.
+    """
+    command = ["rg", "--json", "--line-number", "--follow", "--no-ignore"]
     if not regex:
         command.append("--fixed-strings")
     if not case_sensitive:
@@ -67,7 +75,7 @@ def search(
     if exclude_deps:
         command.extend(ripgrep_excludes())
     else:
-        command.append("-uu")
+        command.append("--hidden")
     for glob in globs or []:
         command.extend(["-g", glob])
     command.extend((pattern, str(root)))

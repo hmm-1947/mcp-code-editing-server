@@ -1,4 +1,15 @@
 {
     "workspaces": {
+        "livekitapp": "D:\\projects\\LiveKitFinal\\livekitapp",
+        "livekit-server": "D:\\projects\\LiveKitFinal\\livekit",
+        "lkf": "D:\\projects\\LiveKitFinal",
+        "backend": "D:\\projects\\LiveKitFinal\\backend",
+        "livekit": "D:\\projects\\LiveKitFinal",
+        "attendance": "D:\\projects\\attendanceautomation",
+        "LiveKitFinal": "D:\\projects\\LiveKitFinal",
+        "videogen": "D:\\projects\\videogen",
+        "pocketgames": "D:\\projects\\pocketgames",
+        "jjgames": "D:\\projects\\jjgames",
+        "joshua-mcp": "D:\\projects\\mcpserver\\joshua-mcp"
     }
 }

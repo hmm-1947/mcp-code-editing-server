@@ -12,7 +12,10 @@ from fastmcp import FastMCP
 from core.instructions import SERVER_INSTRUCTIONS
 from tools import register_tools
 
-mcp = FastMCP("MCP Local Code Editing Server", instructions=SERVER_INSTRUCTIONS)
+mcp = FastMCP(
+    "MCP Local Code Editing Server",
+    instructions=SERVER_INSTRUCTIONS,
+)
 
 register_tools(mcp)
 
@@ -25,6 +28,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8001)
     arguments = parser.parse_args()
 
+
     if arguments.transport == "stdio":
         mcp.run(transport="stdio")
     else:
@@ -33,3 +37,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
