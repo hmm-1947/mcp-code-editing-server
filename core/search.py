@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Iterator
 
 DEPENDENCY_DIRS = frozenset({
-    ".dart_tool", ".git", ".idea", ".mypy_cache", ".next", ".pub-cache",
+    ".cody_history", ".dart_tool", ".git", ".idea", ".mypy_cache", ".next", ".pub-cache",
     ".pytest_cache", ".ruff_cache", ".venv", ".vscode", "__pycache__",
     "build", "coverage", "dist", "env", "node_modules", "site-packages",
     "target", "venv",
