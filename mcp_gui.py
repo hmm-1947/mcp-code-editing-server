@@ -12,6 +12,7 @@ Requires: pip install pystray pillow requests
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -35,9 +36,26 @@ except ImportError:
 # ----------------------------------------------------------------------
 # CONFIGURATION
 # ----------------------------------------------------------------------
-PROJECT_DIR = Path(r"D:\projects\mcpserver\joshua-mcp")
+def _resolve_project_dir():
+    env = os.environ.get("CODY_PROJECT_DIR")
+    if env:
+        return Path(env)
+    base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    for cand in (base, base.parent):
+        if (cand / "server_v2.py").exists():
+            return cand
+    return base
+
+
+PROJECT_DIR = _resolve_project_dir()
 VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
-SERVER_SCRIPT = PROJECT_DIR / "server.py"
+# Selectable server versions. Both are launched with --port NGROK_PORT, so they share
+# one port and the ngrok tunnel never has to be restarted when switching.
+SERVER_VERSIONS = {
+    "Version 1": PROJECT_DIR / "server.py",
+    "Version 2": PROJECT_DIR / "server_v2.py",
+}
+DEFAULT_VERSION = "Version 1"
 NGROK_EXE = "ngrok"
 NGROK_PORT = 8001
 NGROK_API = "http://127.0.0.1:4040/api/tunnels"
@@ -46,6 +64,7 @@ LOG_DIR = PROJECT_DIR / "tray_logs"
 LOG_ARCHIVE_DIR = LOG_DIR / "archive"
 SERVER_LOG = LOG_DIR / "server.log"
 NGROK_LOG = LOG_DIR / "ngrok.log"
+SETTINGS_FILE = LOG_DIR / "gui_settings.json"
 
 APP_NAME = "CodyMCPServer"
 
@@ -59,8 +78,24 @@ else:
 
 ICON_PATH = PROJECT_DIR / "assets" / "icon.ico"
 
-LOG_DIR.mkdir(exist_ok=True)
-LOG_ARCHIVE_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+LOG_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_version() -> str:
+    """The version picked last time (so autostart on login reuses it)."""
+    try:
+        name = json.loads(SETTINGS_FILE.read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_VERSION
+    return name if name in SERVER_VERSIONS else DEFAULT_VERSION
+
+
+def save_version(name: str) -> None:
+    try:
+        SETTINGS_FILE.write_text(json.dumps({"version": name}), encoding="utf-8")
+    except OSError:
+        pass
 
 CREATE_NO_WINDOW = 0x08000000
 
@@ -89,8 +124,11 @@ class ProcessManager:
         self.server_log_fh = None
         self.ngrok_log_fh = None
         self.running = False
+        self.version = load_version()  # key of SERVER_VERSIONS
+        self._tails = {}  # stream name -> (thread, stop flag)
         self.log_callback = log_callback  # called as log_callback(stream_name, line)
         self.clear_callback = None  # called with no args right before a fresh start
+        self.clear_server_callback = None  # called when only the server console is reset (version switch)
 
     @staticmethod
     def _timestamp():
@@ -108,16 +146,16 @@ class ProcessManager:
             except OSError:
                 pass
 
-    def _open_log_handles(self):
+    def _open_server_log(self):
         if self.server_log_fh:
             self.server_log_fh.close()
+        self._archive_log(SERVER_LOG)
+        self.server_log_fh = open(SERVER_LOG, "a", buffering=1, encoding="utf-8")
+
+    def _open_ngrok_log(self):
         if self.ngrok_log_fh:
             self.ngrok_log_fh.close()
-
-        self._archive_log(SERVER_LOG)
         self._archive_log(NGROK_LOG)
-
-        self.server_log_fh = open(SERVER_LOG, "a", buffering=1, encoding="utf-8")
         self.ngrok_log_fh = open(NGROK_LOG, "a", buffering=1, encoding="utf-8")
 
     def _tail_thread(self, path: Path, stream_name: str, stop_flag):
@@ -133,31 +171,91 @@ class ProcessManager:
         except FileNotFoundError:
             pass
 
+    def _start_tail(self, stream_name: str, path: Path):
+        flag = {"stop": False}
+        thread = threading.Thread(target=self._tail_thread, args=(path, stream_name, flag), daemon=True)
+        self._tails[stream_name] = (thread, flag)
+        thread.start()
+
+    def _stop_tail(self, stream_name: str):
+        entry = self._tails.pop(stream_name, None)
+        if entry:
+            thread, flag = entry
+            flag["stop"] = True
+            thread.join(timeout=2)  # so its last lines cannot land after a console clear
+
+    # -------------------- commands / process helpers --------------------
+    def _server_command(self):
+        # --port is passed explicitly: server_v2.py defaults to 8002, and both versions
+        # must sit on the port ngrok forwards to.
+        return [str(VENV_PYTHON), str(SERVER_VERSIONS[self.version]), "--port", str(NGROK_PORT)]
+
+    @staticmethod
+    def _ngrok_command():
+        return [NGROK_EXE, "http", str(NGROK_PORT), "--log=stdout", "--log-format=term", "--log-level=warn"]
+
+    @staticmethod
+    def _kill_tree(proc):
+        """Hard-stop a process and its children. The venv python.exe is a launcher that runs
+        the real interpreter as a child; killing only the launcher could leave the port held."""
+        if proc is None or proc.poll() is not None:
+            return
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+    @staticmethod
+    def _port_in_use(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(0.5)
+            return sock.connect_ex(("127.0.0.1", port)) == 0
+
+    def _wait_port_free(self, port: int, timeout: float = 10.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self._port_in_use(port):
+                return True
+            time.sleep(0.25)
+        return False
+
+    def _spawn_server(self):
+        """Start the selected server. Caller holds the lock and has opened the server log."""
+        self.server_log_fh.write(f"\n--- started {self._timestamp()} ({self.version}, port {NGROK_PORT}) ---\n")
+        self.server_proc = subprocess.Popen(
+            self._server_command(),
+            cwd=str(PROJECT_DIR),
+            stdout=self.server_log_fh,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        self._start_tail("server", SERVER_LOG)
+
+    # -------------------- lifecycle --------------------
     def start_all(self):
         with self._lock:
             if self.running:
                 return
-            self._open_log_handles()
+            self._open_server_log()
+            self._open_ngrok_log()
 
             if self.clear_callback:
                 self.clear_callback()
 
-            self.server_log_fh.write(f"\n--- started {self._timestamp()} ---\n")
-            self.server_proc = subprocess.Popen(
-                [str(VENV_PYTHON), str(SERVER_SCRIPT)],
-                cwd=str(PROJECT_DIR),
-                stdout=self.server_log_fh,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                creationflags=CREATE_NO_WINDOW,
-            )
+            self._spawn_server()
 
         time.sleep(1)  # let server bind the port before ngrok attaches
 
         with self._lock:
             self.ngrok_log_fh.write(f"\n--- started {self._timestamp()} ---\n")
             self.ngrok_proc = subprocess.Popen(
-                [NGROK_EXE, "http", str(NGROK_PORT), "--log=stdout", "--log-format=term", "--log-level=warn"],
+                self._ngrok_command(),
                 cwd=str(PROJECT_DIR),
                 stdout=self.ngrok_log_fh,
                 stderr=subprocess.STDOUT,
@@ -165,29 +263,22 @@ class ProcessManager:
                 creationflags=CREATE_NO_WINDOW,
             )
             self.running = True
-
-        # start tailing fresh log files
-        self._stop_flags = {"server": {"stop": False}, "ngrok": {"stop": False}}
-        threading.Thread(
-            target=self._tail_thread, args=(SERVER_LOG, "server", self._stop_flags["server"]), daemon=True
-        ).start()
-        threading.Thread(
-            target=self._tail_thread, args=(NGROK_LOG, "ngrok", self._stop_flags["ngrok"]), daemon=True
-        ).start()
+            self._start_tail("ngrok", NGROK_LOG)
 
     def stop_all(self):
         with self._lock:
-            if hasattr(self, "_stop_flags"):
-                for flag in self._stop_flags.values():
-                    flag["stop"] = True
+            for stream in ("server", "ngrok"):
+                self._stop_tail(stream)
 
-            for proc in (self.ngrok_proc, self.server_proc):
-                if proc and proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=8)
-                    except subprocess.TimeoutExpired:
-                        proc.kill()
+            proc = self.ngrok_proc
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+            self._kill_tree(self.server_proc)
+
             self.ngrok_proc = None
             self.server_proc = None
             self.running = False
@@ -196,6 +287,32 @@ class ProcessManager:
         self.stop_all()
         time.sleep(1)
         self.start_all()
+
+    def switch_version(self, name: str):
+        """Swap the server for another version on the same port while ngrok keeps running,
+        so the public URL stays the same. Returns an error message, or None on success.
+        If everything is stopped this only records the choice for the next start."""
+        with self._lock:
+            self.version = name
+            if not self.running:
+                return None
+            self._stop_tail("server")
+            self._kill_tree(self.server_proc)
+            self.server_proc = None
+            if self.server_log_fh:
+                self.server_log_fh.close()
+                self.server_log_fh = None
+
+        if not self._wait_port_free(NGROK_PORT):
+            return (f"port {NGROK_PORT} is still in use after stopping the old server; "
+                    "use Restart, or free the port and try again")
+
+        with self._lock:
+            self._open_server_log()  # archives the old server log, starts a fresh one
+            if self.clear_server_callback:
+                self.clear_server_callback()
+            self._spawn_server()
+        return None
 
     def shutdown(self):
         self.stop_all()
@@ -253,8 +370,8 @@ class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Cody MCP Server")
-        self.root.geometry("760x560")
-        self.root.minsize(600, 420)
+        self.root.geometry("820x560")
+        self.root.minsize(740, 420)
         self.root.configure(bg=BG)
         try:
             if ICON_PATH.exists():
@@ -271,6 +388,9 @@ class App:
 
         self.pm = ProcessManager(log_callback=self._on_log_line)
         self.pm.clear_callback = self._on_logs_cleared
+        self.pm.clear_server_callback = self._on_server_log_cleared
+        self.version_var = tk.StringVar(value=self.pm.version)
+        self._switching = False  # True while a version swap is in progress
 
         self._build_style()
         self._build_ui()
@@ -378,6 +498,20 @@ class App:
         self.log_selector.pack(side="left")
         self.log_selector.bind("<<ComboboxSelected>>", lambda e: self._refresh_log_view())
 
+        # server version selector (switching hot-swaps the server; ngrok keeps running)
+        version_frame = ttk.Frame(controls)
+        version_frame.pack(side="right", padx=(0, 14))
+        ttk.Label(version_frame, text="Server:", style="Dim.TLabel").pack(side="left", padx=(0, 6))
+        self.version_selector = ttk.Combobox(
+            version_frame,
+            textvariable=self.version_var,
+            values=list(SERVER_VERSIONS),
+            state="readonly",
+            width=10,
+        )
+        self.version_selector.pack(side="left")
+        self.version_selector.bind("<<ComboboxSelected>>", lambda e: self.on_version_selected())
+
         # log panel
         log_panel = tk.Frame(self.root, bg=BG_LOG, highlightbackground=BORDER, highlightthickness=1)
         log_panel.pack(fill="both", expand=True, padx=pad, pady=(0, 10))
@@ -389,7 +523,8 @@ class App:
             insertbackground=FG,
             font=("Consolas", 9),
             wrap="word",
-            borderwidth=0,
+            height=10,  # small requested height; the panel still expands to fill the window,
+            borderwidth=0,  # and the footer (Copy URL / autostart) is never squeezed out
             padx=10,
             pady=8,
             state="disabled",
@@ -512,23 +647,66 @@ class App:
 
     # -------------------- actions --------------------
     def on_start(self):
-        if self.pm.running:
+        if self.pm.running or self._switching:
             return
-        self._append_system_line("Starting server + ngrok...")
+        self._append_system_line(f"Starting {self.pm.version} + ngrok...")
         threading.Thread(target=self._start_worker, daemon=True).start()
 
     def _start_worker(self):
         self.pm.start_all()
 
     def on_stop(self):
-        if not self.pm.running:
+        if not self.pm.running or self._switching:
             return
         self._append_system_line("Stopping server + ngrok...")
         threading.Thread(target=self.pm.stop_all, daemon=True).start()
 
     def on_restart(self):
-        self._append_system_line("Restarting server + ngrok...")
+        if self._switching:
+            return
+        self._append_system_line(f"Restarting {self.pm.version} + ngrok...")
         threading.Thread(target=self.pm.restart_all, daemon=True).start()
+
+    def on_version_selected(self):
+        """Dropdown changed: remember the choice; if running, hot-swap the server."""
+        chosen = self.version_var.get()
+        if self._switching or chosen == self.pm.version:
+            self.version_var.set(self.pm.version)
+            return
+        save_version(chosen)
+        if not self.pm.running:
+            self.pm.version = chosen
+            self.log_queue.put(("__clear_server__", None))
+            self._append_system_line(f"{chosen} selected. Press Start to run it on port {NGROK_PORT}.")
+            self._set_running_ui(False)
+            return
+        self._set_switching(True)
+        self._append_system_line(f"Switching to {chosen} (ngrok stays up)...")
+        threading.Thread(target=self._switch_worker, args=(chosen,), daemon=True).start()
+
+    def _switch_worker(self, chosen):
+        try:
+            error = self.pm.switch_version(chosen)
+        except Exception as e:  # never leave the UI locked
+            error = f"unexpected error: {e}"
+        # hand the result to the Tk thread through the same queue the logs use
+        self.log_queue.put(("__switch_done__", (chosen, error)))
+
+    def _finish_switch(self, chosen, error):
+        self._set_switching(False)
+        if error:
+            self._append_system_line(f"Switch failed: {error}")
+        else:
+            self._append_system_line(f"{chosen} is running on port {NGROK_PORT}; ngrok URL unchanged.")
+        self._set_running_ui(self.pm.running)
+
+    def _set_switching(self, switching):
+        self._switching = switching
+        self.version_selector.configure(state="disabled" if switching else "readonly")
+        if switching:
+            self.status_text.set("Switching...")
+            for btn in (self.start_btn, self.stop_btn, self.restart_btn):
+                btn.configure(state="disabled")
 
     def on_toggle_autostart(self):
         try:
@@ -560,6 +738,10 @@ class App:
         # called from a worker thread; queue a sentinel handled on the Tk main thread
         self.log_queue.put(("__clear__", None))
 
+    def _on_server_log_cleared(self):
+        # version switch: reset only the server console (ngrok keeps its history)
+        self.log_queue.put(("__clear_server__", None))
+
     def _append_system_line(self, text):
         self.log_queue.put(("server" if self.current_stream.get() == "server" else "ngrok", f"* {text}"))
 
@@ -570,6 +752,12 @@ class App:
                 if stream_name == "__clear__":
                     self._clear_all_logs()
                     continue
+                if stream_name == "__clear_server__":
+                    self._clear_server_log()
+                    continue
+                if stream_name == "__switch_done__":
+                    self._finish_switch(*line)
+                    continue
                 buf = self.log_buffers[stream_name]
                 buf.append(line)
                 if len(buf) > 2000:
@@ -579,6 +767,13 @@ class App:
         except Empty:
             pass
         self.root.after(150, self._poll_log_queue)
+
+    def _clear_server_log(self):
+        self.log_buffers["server"].clear()
+        if self.current_stream.get() == "server":
+            self.log_text.configure(state="normal")
+            self.log_text.delete("1.0", "end")
+            self.log_text.configure(state="disabled")
 
     def _clear_all_logs(self):
         self.log_buffers["server"].clear()
@@ -630,8 +825,10 @@ class App:
         self.root.after(next_delay, self._poll_status)
 
     def _set_running_ui(self, running):
+        if self._switching:  # the swap owns the UI until it finishes
+            return
         if running:
-            self.status_text.set("Running")
+            self.status_text.set(f"Running · {self.pm.version}")
             self._draw_dot(ACCENT)
             self.start_btn.configure(state="disabled")
             self.stop_btn.configure(state="normal")
@@ -649,8 +846,10 @@ class App:
 
 def main():
     app = App()
-    # auto-start the server when the GUI itself launches
-    app.on_start()
+    # auto-start the server when the GUI itself launches (--no-autostart skips it,
+    # e.g. for a quick smoke test of a fresh build)
+    if "--no-autostart" not in sys.argv[1:]:
+        app.on_start()
     app.run()
 
 
