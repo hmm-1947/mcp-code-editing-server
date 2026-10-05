@@ -270,9 +270,9 @@ class ProcessManager:
             tunnels = resp.json().get("tunnels", [])
             for t in tunnels:
                 if t.get("proto") == "https":
-                    return t.get("public_url")
+                    return t.get("public_url", "").rstrip("/") + "/mcp"
             if tunnels:
-                return tunnels[0].get("public_url")
+                return tunnels[0].get("public_url", "").rstrip("/") + "/mcp"
         except Exception:
             return None
         return None

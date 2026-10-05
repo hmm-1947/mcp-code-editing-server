@@ -30,12 +30,6 @@ def walk(node: Node) -> Iterator[Node]:
         stack.extend(reversed(current.children))
 
 
-def list_nodes(path: str) -> list[str]:
-    """Return every node type in a source file."""
-    tree, _ = parse_file(path)
-    return [node.type for node in walk(tree.root_node)]
-
-
 def _name_node(node: Node) -> Node | None:
     return node.child_by_field_name("name") or next(
         (child for child in node.children if child.type in NAME_TYPES), None
@@ -97,19 +91,6 @@ def _signature(node: Node, source: bytes) -> str:
     return source[node.start_byte:end].decode("utf-8").strip().rstrip("{").rstrip(":").strip()
 
 
-def _list_definitions(path: str, target_kind: str) -> list[dict]:
-    tree, source = parse_file(path)
-    return [
-        {
-            "name": _name(source, name_node),
-            "signature": _signature(node, source),
-            "line": node.start_point[0] + 1,
-        }
-        for node, name_node, kind in _iter_definitions(tree.root_node)
-        if kind == target_kind
-    ]
-
-
 def _find_definition(path: str, target_kind: str, target_name: str):
     tree, source = parse_file(path)
     for node, name_node, kind in _iter_definitions(tree.root_node):
@@ -118,39 +99,9 @@ def _find_definition(path: str, target_kind: str, target_name: str):
     return None, None
 
 
-def _read_definition(path: str, target_kind: str, target_name: str) -> str:
-    node, source = _find_definition(path, target_kind, target_name)
-    if node is None:
-        raise ValueError(f"{target_kind.title()} '{target_name}' not found")
-    return source[node.start_byte:_body_end_byte(node)].decode("utf-8")
-
-
-def list_functions(path: str) -> list[dict]:
-    """Return functions with name, signature, and line number."""
-    return _list_definitions(path, "function")
-
-
-def list_classes(path: str) -> list[dict]:
-    """Return classes with name, signature, and line number."""
-    return _list_definitions(path, "class")
-
-
 def find_function(path: str, function_name: str):
     """Return a function node and its source bytes, or (None, None)."""
     return _find_definition(path, "function", function_name)
-
-
-def find_class(path: str, class_name: str):
-    """Return a class node and its source bytes, or (None, None)."""
-    return _find_definition(path, "class", class_name)
-
-
-def read_function(path: str, function_name: str) -> str:
-    return _read_definition(path, "function", function_name)
-
-
-def read_class(path: str, class_name: str) -> str:
-    return _read_definition(path, "class", class_name)
 
 
 def _find_symbols(path: str, query: str, include_bodies: bool) -> list[dict]:
@@ -180,8 +131,3 @@ def _find_symbols(path: str, query: str, include_bodies: bool) -> list[dict]:
 def find_symbols_in_file(path: str, query: str) -> list[dict]:
     """Return matching functions/classes without their source bodies."""
     return _find_symbols(path, query, include_bodies=False)
-
-
-def find_symbols_in_file_with_bodies(path: str, query: str) -> list[dict]:
-    """Return matching functions/classes with their source bodies."""
-    return _find_symbols(path, query, include_bodies=True)

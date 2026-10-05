@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import shlex
 
-from .common import CliError, internal_error, take_script
+from .common import CliError, internal_error, split_line, take_script
 
 MAX_COMMANDS = 20
 NOT_BATCHABLE = {"batch"}                   # nested batch
@@ -38,7 +38,7 @@ def cmd_batch(raw: str) -> str:
     sections: list[str] = []
     for line in lines:
         try:
-            argv = shlex.split(line, posix=True)
+            argv = split_line(line)
         except ValueError as error:
             sections.append(f"== {line}\n{fail(f'could not parse: {error}')}")
             if stop:

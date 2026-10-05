@@ -5,6 +5,6 @@
     structure   cheap bracket-balance guard for edits
 """
 
-from ..src.core import search, structure, terminal  # noqa: F401
+from . import search, structure, terminal  # noqa: F401
 
 __all__ = ["search", "structure", "terminal"]

@@ -166,15 +166,25 @@ def _run(prepared, cwd: Path, timeout: int) -> dict:
     env.setdefault("CI", "1")
     env.setdefault("NO_COLOR", "1")
     try:
-        done = subprocess.run(
-            prepared, shell=isinstance(prepared, str), cwd=str(cwd), capture_output=True,
-            encoding="utf-8", errors="replace", timeout=timeout, env=env, stdin=subprocess.DEVNULL,
+        process = subprocess.Popen(
+            prepared, shell=isinstance(prepared, str), cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            encoding="utf-8", errors="replace", env=env, stdin=subprocess.DEVNULL,
+            creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW) if os.name == "nt" else 0,
+            start_new_session=(os.name != "nt"),
         )
-        return {"code": done.returncode, "out": done.stdout or "", "err": _clean_stderr(done.stderr or ""), "timeout": False}
-    except subprocess.TimeoutExpired as expired:
-        return {"code": None, "out": _text(expired.stdout), "err": _text(expired.stderr), "timeout": True}
     except OSError as error:
         return {"code": 1, "out": "", "err": f"could not start: {error}", "timeout": False}
+    try:
+        out, err = process.communicate(timeout=timeout)
+        return {"code": process.returncode, "out": out or "", "err": _clean_stderr(err or ""), "timeout": False}
+    except subprocess.TimeoutExpired:
+        _kill_tree(process.pid)
+        try:
+            out, err = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            out, err = "", ""
+        return {"code": None, "out": out or "", "err": _clean_stderr(err or ""), "timeout": True}
 
 
 def _text(blob) -> str:

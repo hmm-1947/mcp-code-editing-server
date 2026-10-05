@@ -1,17 +1,6 @@
 import re
-from pathlib import Path
 
 from .finder import find_function, _body_end_byte
-
-
-def replace_function(
-    path: str,
-    function_name: str,
-    new_function: str,
-):
-    new_source, _, _ = build_function_replacement(path, function_name, new_function)
-    Path(path).write_bytes(new_source)
-    return f"Replaced function '{function_name}'"
 
 
 def build_function_replacement(
@@ -59,32 +48,3 @@ def fuzzy_find_text(text: str, old_text: str):
     )
     match = re.search(pattern, text)
     return None if match is None else match.span()
-
-
-def replace_lines(
-    path: str,
-    start_line: int,
-    end_line: int,
-    new_text: str,
-):
-    p = Path(path)
-    text = p.read_text(encoding="utf-8")
-
-    had_trailing_newline = text.endswith("\n")
-    lines = text.split("\n")
-    if had_trailing_newline:
-        lines = lines[:-1]
-
-    total = len(lines)
-
-    if start_line < 1 or end_line < start_line or end_line > total:
-        raise ValueError(
-            f"Invalid line range {start_line}-{end_line} for file with {total} lines"
-        )
-
-    result_lines = lines[:start_line - 1] + new_text.split("\n") + lines[end_line:]
-    new_content = "\n".join(result_lines) + ("\n" if had_trailing_newline else "")
-
-    p.write_text(new_content, encoding="utf-8")
-
-    return f"Replaced lines {start_line}-{end_line}"

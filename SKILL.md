@@ -17,6 +17,12 @@ run("edit lib/auth.dart --lines 44-46 --new 'x = 1'")
 run("sh flutter analyze")
 ```
 
+## Rules
+
+- Do not add comments to the code.
+- When using this MCP tool, no need to tell the user what you are going to do or what you find while editing. If you want to say anything, say it in one line. Never give the user a long description of what is being done or found.
+- If anything is left to do at the end, or the limits of the session are about to run out, say what is left in nice one-liners.
+
 ## Workspace and paths
 
 Paths are relative to the workspace, or absolute. Pick the workspace with `--ws`,
@@ -31,6 +37,22 @@ first on the line, with a saved alias or a plain directory path:
 (`ws rm NAME`). Without `--ws`, relative paths resolve against the server's own
 working directory, so set it whenever you are working on a project. If `--ws NAME`
 is on a line by itself, the command may follow on the next line.
+
+### Path rules (Windows server)
+
+- The server runs on the user's Windows machine, so paths are Windows paths: `D:/projects/myapp`. Never use `/home/...`, `/mnt/...` or `~` paths from your own sandbox.
+- Forward slashes are safest: `D:/projects/myapp/src/a.py`. Backslashes also work (`D:\projects\myapp`), and they are never treated as escapes.
+- Paths with spaces go in single quotes: `--ws 'D:/My Projects/app'`.
+- Register a workspace once with its full absolute path, then reuse the alias:
+
+```
+ws add myapp D:/projects/myapp
+--ws myapp tree --depth 2
+```
+
+- If the user gives a path, use it exactly as given (do not guess a drive or prefix). If unsure, run `ws` to see saved aliases, or `--ws D:/ tree --depth 1` to look around.
+- A path error such as "neither a registered workspace nor an existing directory" means the path is wrong: run `ws`, fix the path, and retry. Do not keep retrying variations.
+- Inside a workspace, use relative paths with forward slashes (`src/app.py`), never a leading `/`.
 
 ## Locate
 
@@ -155,8 +177,7 @@ do not.
 
 ## Browser
 
-`b <playwright-cli command>` drives Playwright's own Chromium, not the user's
-browser. Every reply lists new console warnings and errors.
+`b <playwright-cli command>` drives Playwright's, Every reply lists new console warnings and errors.
 
 ```
 b open http://localhost:3000 --errors      title + console errors only
@@ -173,8 +194,3 @@ Refs (`e5`) reset on `open`, `goto` and `reload`: take a fresh `b snapshot` firs
 `stats [N|reset]` shows output size per command, useful for finding what is eating
 tokens. Typical flow: `find --files` -> `read PATH` (outline) -> `read --fn NAME` ->
 `edit` -> `check` (only if needed).
-
-## Reporting
-
-Say what changed and where. If a check ran, give the command and its result. If
-nothing was verified, say so.

@@ -6,14 +6,16 @@
 import argparse
 import os
 import re
-import shlex
+import sys
 
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.utilities.types import Image
 
 import app_paths
 from cody_cli.browser_cmds import screenshot_paths
-from cody_cli.common import set_payloads
+from cody_cli.common import (
+    reset_session, reset_workspace, set_payloads, set_session, set_workspace, split_line,
+)
 from cody_cli.main import HELP, dispatch, parse_line
 
 if app_paths.FROZEN:
@@ -69,7 +71,7 @@ def _prefix_argv(line: str) -> list[str] | None:
     match = re.match(r"^(--ws\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s+)?(\w+)(?:\s|$)", line)
     if not match or match.group(2) not in RAW_HEADS:
         return None
-    prefix = shlex.split(match.group(1)) if match.group(1) else []
+    prefix = split_line(match.group(1)) if match.group(1) else []
     return prefix + [match.group(2)]
 
 
@@ -77,7 +79,7 @@ _WS_ALONE = re.compile(r"--ws\s+(?:\"[^\"]*\"|'[^']*'|\S+)")
 
 
 @mcp.tool(description=TOOL_DESCRIPTION, output_schema=None)     # no schema: the reply may be text + image content
-def run(command: str) -> str | list:
+def run(command: str, ctx: Context | None = None) -> str | list:
     text = (command or "").lstrip()
     line, _, payload = text.partition("\n")
     line = line.strip()
@@ -94,17 +96,16 @@ def run(command: str) -> str | list:
         argv = _prefix_argv(line)
         if argv is None:
             return f"ERR could not parse command: {error}"
-    print(f"[run] {line[:160]!r}" + (f" +payload {len(payload)}c" if payload else ""))
-    saved = os.environ.get("CODY_WS")
+    print(f"[run] {line[:160]!r}" + (f" +payload {len(payload)}c" if payload else ""), file=sys.stderr)
+    ws_token = set_workspace("")
+    session_token = set_session(getattr(ctx, "session_id", "") if ctx is not None else "")
     set_payloads(payload if payload.strip() else None)
     try:
         return _with_images(dispatch(argv, raw=line))
     finally:
         set_payloads(None)
-        if saved is None:
-            os.environ.pop("CODY_WS", None)
-        else:
-            os.environ["CODY_WS"] = saved
+        reset_session(session_token)
+        reset_workspace(ws_token)
 
 
 def main() -> None:

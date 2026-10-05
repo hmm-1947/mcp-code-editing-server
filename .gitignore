@@ -4,3 +4,4 @@ __pycache__/
 auth_token.json
 packaging/
 installer_output/
+tray_logs/

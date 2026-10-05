@@ -15,7 +15,7 @@ from .code_cmds import (
 from .batch_cmds import cmd_batch
 from .check_cmd import cmd_check
 from .shell_cmds import cmd_proc, cmd_sh
-from .common import CliError, check_payload_count, fail, internal_error
+from .common import CliError, check_payload_count, fail, internal_error, set_workspace, split_line
 
 HELP = """cody <cmd>   (--ws NAME|PATH first, once; paths relative to workspace or absolute)
 find  Q [--files] [--in DIR --glob '*.py' --regex --i --defs --max N --ctx N]   grouped by file; --files = paths+counts only
@@ -101,7 +101,7 @@ def dispatch(argv: list[str], raw: str | None = None) -> str:
         index = args.index("--ws")
         if index + 1 >= len(args):
             return fail("--ws needs a name")
-        os.environ["CODY_WS"] = args[index + 1]
+        set_workspace(args[index + 1])
         del args[index:index + 2]
         if not args:
             return fail("--ws NAME needs a command after it, e.g. `--ws NAME tree`")
@@ -126,7 +126,7 @@ def dispatch(argv: list[str], raw: str | None = None) -> str:
 
 
 def parse_line(line: str) -> list[str]:
-    return shlex.split(line, posix=True)
+    return split_line(line)
 
 
 def main() -> None:

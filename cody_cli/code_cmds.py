@@ -3,18 +3,19 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
 from pathlib import Path
 
-from code_engine.finder import find_symbols_in_file, list_classes, list_functions
+from code_engine.finder import find_symbols_in_file
 from code_engine.languages import LANGUAGES
 from code_engine.replace import build_function_replacement, fuzzy_find_text
-from core import search as text_search, structure, terminal
+from core import search as text_search, structure
 from core.diff import unified
 from core import history
 from core.syntax_check import check_python_syntax
 
 from . import outline
-from .common import CliError, Raw, current_workspace, path_of, root_of, split_flags, to_int, unescape_flag
+from .common import CliError, Raw, current_session, current_workspace, path_of, root_of, split_flags, to_int, unescape_flag
 
 MAX_READ_LINES = 400
 READ_CAP = 200
@@ -65,7 +66,7 @@ def _short(raw: str) -> str:
         return "/".join(parts[-2:]) if len(parts) > 1 else str(target)
 
 
-_SENT: dict[tuple[str, int, int], str] = {}
+_SENT: dict[tuple[str, str, int, int], str] = {}
 _SENT_MAX = 300
 
 
@@ -75,13 +76,21 @@ def _already_sent(target: Path, start: int, end: int, body: str) -> bool:
     if os.environ.get("CODY_NOCACHE") == "1":
         return False
     digest = hashlib.sha1(body.encode("utf-8", errors="replace")).hexdigest()
-    key = (str(target), start, end)
+    key = (current_session(), str(target), start, end)
     if _SENT.get(key) == digest:
         return True
     if len(_SENT) >= _SENT_MAX:
         _SENT.pop(next(iter(_SENT)))
     _SENT[key] = digest
     return False
+
+
+def _split_lines(text: str) -> list[str]:
+    """Lines split on \\n / \\r\\n only, so form feeds and U+2028 stay inside their line."""
+    parts = text.split("\n")
+    if parts and parts[-1] == "":
+        parts.pop()
+    return [p[:-1] if p.endswith("\r") else p for p in parts]
 
 
 def _numbered(lines: list[str], first: int, last: int) -> str:
@@ -101,8 +110,15 @@ def _commit(target: Path, proposed: str, existed: bool) -> None:
     if existed:
         history.snapshot(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    with target.open("w", encoding="utf-8", newline="") as handle:
-        handle.write(proposed)
+    temp = target.with_name(target.name + ".cody-tmp")
+    try:
+        with temp.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(proposed)
+        if existed and target.exists():
+            shutil.copymode(target, temp)
+        os.replace(temp, target)
+    finally:
+        temp.unlink(missing_ok=True)
 
 
 def _rows(target: Path):
@@ -224,7 +240,7 @@ def cmd_read(args: list[str]) -> str:
                     start = end = int(tail)
         target = path_of(raw)
         text = _read_text(target)
-        lines = text.splitlines()
+        lines = _split_lines(text)
         total = len(lines)
         if total == 0:
             outputs.append(f"# {raw} (empty)")
@@ -406,7 +422,7 @@ def cmd_edit(args: list[str]) -> str:
         if new is None:
             raise CliError("--fn needs --new")
         try:
-            proposed_bytes, first, last = build_function_replacement(str(target), flags["fn"], new)
+            proposed_bytes, first, last = build_function_replacement(str(target), flags["fn"], _match_ending(text, new))
         except ValueError as error:
             raise CliError(str(error))
         proposed = proposed_bytes.decode("utf-8")
@@ -419,7 +435,7 @@ def cmd_edit(args: list[str]) -> str:
         a, _, b = flags["lines"].partition("-")
         start = to_int(a, "lines start")
         end = to_int(b or a, "lines end")
-        lines = text.splitlines()
+        lines = _split_lines(text)
         if start < 1 or end < start or end > len(lines):
             raise CliError(f"bad range {start}-{end}; file has {len(lines)} lines")
         if "expect" in flags:
@@ -427,7 +443,7 @@ def cmd_edit(args: list[str]) -> str:
             if current.strip() != unescape_flag(flags["expect"]).strip():
                 raise CliError(f"expect mismatch, stale lines. current:\n{_numbered(lines, start, end)}")
         newline = _ending(text)
-        body = _match_ending(text, new).splitlines()
+        body = _split_lines(_match_ending(text, new))
         proposed = newline.join(lines[:start - 1] + body + lines[end:]) + (newline if text.endswith("\n") else "")
         label = f"{start}-{end} -> {start}-{start + len(body) - 1}" if body else f"{start}-{end} deleted"
         span = (start, max(start, start + len(body) - 1))
@@ -480,7 +496,7 @@ def cmd_edit(args: list[str]) -> str:
 def _edit_context(proposed: str, span: tuple[int, int], pad: int) -> str:
     """The changed region +/- `pad` lines, numbered, so the edit can be verified
     without a second read call. Capped so --show can never become a full dump."""
-    lines = proposed.splitlines()
+    lines = _split_lines(proposed)
     if not lines:
         return ""
     first = max(1, span[0] - pad)
@@ -541,52 +557,6 @@ def cmd_undo(args: list[str]) -> str:
     if restored is None:
         raise CliError(f"no history for {args[0]}")
     return f"ok restored {_short(args[0])}"
-
-
-SH_FLAGS = ("cwd", "timeout", "cap")
-
-
-def _split_sh_args(args: list[str]) -> tuple[list[str], dict]:
-    """Cody's own flags are only read BEFORE the command; everything from the
-    first non-flag token on belongs to the shell (so `sh git reset --hard` and
-    `sh pytest --tb=short` pass through untouched). A trailing `--cap N` is
-    still honoured, since models habitually put it last."""
-    flags: dict = {}
-    index = 0
-    while index + 1 < len(args) and args[index].startswith("--") and args[index][2:] in SH_FLAGS:
-        flags[args[index][2:]] = args[index + 1]
-        index += 2
-    rest = args[index:]
-    if len(rest) >= 3 and rest[-2] in ("--cap", "--timeout", "--cwd") and rest[-2][2:] not in flags:
-        flags[rest[-2][2:]] = rest[-1]
-        rest = rest[:-2]
-    return rest, flags
-
-
-def cmd_sh(args: list[str]) -> str:
-    positional, flags = _split_sh_args(args)
-    if not positional:
-        raise CliError("usage: sh [--cwd DIR] [--timeout S] [--cap CHARS] <command...>")
-    command = " ".join(positional)
-    cwd_raw = flags.get("cwd") or current_workspace()
-    cwd = path_of(cwd_raw) if flags.get("cwd") else (
-        root_of(None) if not cwd_raw else path_of(".")
-    )
-    result = terminal.execute(command, cwd, timeout=max(1, to_int(flags.get("timeout", 300), "timeout")))
-    if result.refused:
-        return f"ERR refused: {result.refused}"
-    limit = max(200, to_int(flags.get("cap", SH_CAP), "cap"))
-    head = "exit 0" if result.ok else f"exit {result.exit_code}" + (" TIMEOUT" if result.timed_out else "") + f" {result.duration_ms}ms"
-    parts = [head]
-    out, out_clipped = terminal.clip(result.stdout.strip(), limit)
-    err, err_clipped = terminal.clip(result.stderr.strip(), limit if not result.ok else limit // 2)
-    if out:
-        parts.append(out)
-    if err:
-        parts.append("[stderr]\n" + err)
-    if out_clipped or err_clipped:
-        parts.append("# clipped; filter with findstr/Select-String, or --cap N")
-    return "\n".join(parts)
 
 
 def cmd_ws(args: list[str]) -> str:

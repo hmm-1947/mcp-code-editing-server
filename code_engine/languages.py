@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 from tree_sitter import Language, Parser
@@ -17,13 +18,20 @@ LANGUAGES = {
 }
 
 
+_local = threading.local()
+
+
 def get_parser(file_path: str) -> Parser:
     suffix = Path(file_path).suffix.lower()
 
     if suffix not in LANGUAGES:
         raise ValueError(f"Unsupported language: {suffix}")
 
-    parser = Parser()
-    parser.language = LANGUAGES[suffix]
+    parsers = _local.__dict__.setdefault("parsers", {})
+    parser = parsers.get(suffix)
+    if parser is None:
+        parser = Parser()
+        parser.language = LANGUAGES[suffix]
+        parsers[suffix] = parser
 
     return parser

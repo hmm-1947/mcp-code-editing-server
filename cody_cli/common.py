@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 import traceback
+from contextvars import ContextVar
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -16,6 +18,16 @@ from config import get_workspace, resolve_path
 
 class CliError(Exception):
     pass
+
+
+def split_line(line: str) -> list[str]:
+    """shlex.split; on Windows backslashes stay literal so D:\\a\\b paths survive."""
+    lexer = shlex.shlex(line, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    if os.name == "nt":
+        lexer.escape = ""
+    return list(lexer)
 
 
 def ok(message: str = "ok") -> str:
@@ -72,28 +84,49 @@ def _load_text_file(raw: str) -> Raw:
         raise CliError(f"not utf-8: {raw}")
 
 
-BODY: str | None = None
+_BODY: ContextVar = ContextVar("cody_body", default=None)
+_WS: ContextVar = ContextVar("cody_ws", default="")
+_SESSION: ContextVar = ContextVar("cody_session", default="")
 _HEREDOC = re.compile(r"^<<([A-Za-z_][A-Za-z0-9_]*)$")
 
 
 def set_payloads(body: str | None) -> None:
-    global BODY
-    BODY = None if body is None or not body.strip() else body
+    _BODY.set(None if body is None or not body.strip() else body)
+
+
+def set_workspace(name: str):
+    return _WS.set(name)
+
+
+def reset_workspace(token) -> None:
+    _WS.reset(token)
+
+
+def set_session(session_id: str):
+    return _SESSION.set(session_id or "")
+
+
+def reset_session(token) -> None:
+    _SESSION.reset(token)
+
+
+def current_session() -> str:
+    return _SESSION.get()
 
 
 def _take_payload(name: str, marker: str) -> Raw:
-    global BODY
+    BODY = _BODY.get()
     if BODY is None:
         raise CliError(f"--{name} {marker} needs text on the lines after the command")
     if marker == "-":
-        text, BODY = BODY, None
-        return Raw(text)
+        _BODY.set(None)
+        return Raw(BODY)
     tag = marker[2:]
     lines = BODY.split("\n")
     for index, line in enumerate(lines):
         if line.rstrip("\r") == tag:
             rest = "\n".join(lines[index + 1:])
-            BODY = rest if rest.strip() else None
+            _BODY.set(rest if rest.strip() else None)
             return Raw("\n".join(lines[:index]) + "\n")
     raise CliError(f"--{name} {marker}: closing line '{tag}' not found")
 
@@ -101,10 +134,10 @@ def _take_payload(name: str, marker: str) -> Raw:
 def take_script(label: str) -> str:
     """Consume the whole text after the command line as a raw script (no escape
     processing). Used by `sh --script` and `batch`."""
-    global BODY
-    if BODY is None:
+    text = _BODY.get()
+    if text is None:
         raise CliError(f"{label} needs the script on the lines after the command")
-    text, BODY = BODY, None
+    _BODY.set(None)
     return text.strip("\n")
 
 
@@ -119,6 +152,7 @@ def _markers(args: list[str]) -> list[str]:
 
 def check_payload_count(args: list[str]) -> None:
     markers = _markers(args)
+    BODY = _BODY.get()
     if BODY is None:
         if markers:
             raise CliError(f"{len(markers)} payload marker(s) given but no text after the command")
@@ -182,7 +216,7 @@ def split_flags(args: list[str], value_flags: set[str], bool_flags: set[str]) ->
 
 
 def current_workspace() -> str:
-    return os.environ.get("CODY_WS", "")
+    return _WS.get() or os.environ.get("CODY_WS", "")
 
 
 def path_of(raw: str) -> Path:

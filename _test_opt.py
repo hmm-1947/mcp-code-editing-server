@@ -85,8 +85,8 @@ async def main():
         check("F2 --files lists path (count)", all(("(" in l) or l.startswith("#") for l in o.splitlines()), o[:300])
         check("F2 --files has no code text", "def " not in o and "|" not in o, o[:200])
 
-        o = await run(c, "find execute --defs --in core")
-        check("F3 --defs single file:line form", "terminal.py:88 [def]" in o, o)
+        o = await run(c, "find snapshot --defs --in core")
+        check("F3 --defs single file:line form", "history.py:" in o and "[def]" in o, o)
 
         nothing = "zz" + "zz_no_such" + "_token_qq"   # built at runtime so this file never contains it
         o = await run(c, f"find {nothing}")
