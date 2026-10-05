@@ -1,1 +1,0 @@
-"""Individual MCP tool registrations."""

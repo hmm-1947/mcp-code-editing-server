@@ -13,6 +13,8 @@ import os
 import time
 from pathlib import Path
 
+import app_paths
+
 HISTORY_DIR_NAME = ".cody_history"   # legacy in-project name; kept for compatibility
 MAX_SNAPSHOTS_PER_FILE = 20
 
@@ -21,7 +23,7 @@ def store_root() -> Path:
     override = os.environ.get("CODY_HISTORY_DIR")
     if override:
         return Path(override)
-    return Path(__file__).resolve().parent.parent / "tray_logs" / "history"
+    return app_paths.history_dir()
 
 
 def _history_dir(target: Path) -> Path:

@@ -6,9 +6,9 @@ os.environ["CODY_NOCACHE"] = "1"
 
 from fastmcp import Client
 
-from server_v2 import mcp
+from server import mcp
 
-WS = "--ws joshua-mcp"
+WS = "--ws " + os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 PASS = FAIL = 0
 
 
@@ -33,11 +33,11 @@ def size(text):
 
 async def main():
     async with Client(mcp) as c:
-        print("=== SIZES (baseline: read edit.py 18973c, read structure.py 6351c, find path 2318c) ===")
-        o = await run(c, "read tool_handlers/edit.py")
-        print("read edit.py (bare):", size(o))
-        check("R1 big code file -> outline", o.startswith("# tool_handlers/edit.py") and "outline" in o and "fn edit" in o, o[:200])
-        check("R1 outline has nested indent", any(l.startswith("  ") and "fn edit" in l for l in o.splitlines()), o[:400])
+        print("=== SIZES (baseline: read code_cmds.py 18973c, read structure.py 6351c, find path 2318c) ===")
+        o = await run(c, "read cody_cli/code_cmds.py")
+        print("read code_cmds.py (bare):", size(o))
+        check("R1 big code file -> outline", o.startswith("# cody_cli/code_cmds.py") and "outline" in o and "fn cmd_edit" in o, o[:200])
+        check("R1 outline has nested indent", any(l.startswith("  ") and "fn walk" in l for l in o.splitlines()), o[:400])
         check("R1 outline much smaller than 18973c", len(o) < 1500, str(len(o)))
 
         o = await run(c, "read core/structure.py")
@@ -47,27 +47,27 @@ async def main():
         o = await run(c, "read core/diff.py")
         check("R3 small file (17 lines) -> full code", "outline" not in o and "1|" in o, o[:120])
 
-        o = await run(c, "read tool_handlers/edit.py --fn _dominant_ending")
+        o = await run(c, "read cody_cli/code_cmds.py --fn _match_ending")
         print("read --fn:", size(o))
-        check("R4 --fn returns just the function", "_dominant_ending" in o and len(o.splitlines()) < 12, o)
+        check("R4 --fn returns just the function", "_match_ending" in o and len(o.splitlines()) < 12, o)
         check("R4 --fn no 'more' hint", "# more" not in o)
 
-        o = await run(c, "read tool_handlers/edit.py --fn nope_missing")
+        o = await run(c, "read cody_cli/code_cmds.py --fn nope_missing")
         check("R5 --fn missing -> ERR with similar names", o.startswith("ERR") and "not found" in o, o)
 
-        o = await run(c, "read tool_handlers/edit.py:100-110")
-        check("R6 range read", "# tool_handlers/edit.py 100-110/" in o and len(o.splitlines()) == 13 and o.splitlines()[-1].startswith("# more: read"), o[:100])
+        o = await run(c, "read cody_cli/code_cmds.py:100-110")
+        check("R6 range read", "# cody_cli/code_cmds.py 100-110/" in o and len(o.splitlines()) == 13 and o.splitlines()[-1].startswith("# more: read"), o[:100])
 
-        o = await run(c, "read tool_handlers/edit.py:1-999")
+        o = await run(c, "read cody_cli/code_cmds.py:1-999")
         check("R7 range >200 is capped with more hint", "1-200/" in o and "# more: read" in o, o[:80])
 
-        o = await run(c, "read tool_handlers/edit.py --full")
+        o = await run(c, "read cody_cli/shell_cmds.py --full")
         check("R8 --full bypasses outline", "outline" not in o and o.count("\n") > 300, str(o.count("\n")))
 
         o = await run(c, "read README.MD")
         check("R9 non-code big file falls back to plain lines", "outline" not in o and o.startswith("# README.MD 1-"), o[:80])
 
-        o = await run(c, "read tool_handlers/edit.py --around 100 --window 5")
+        o = await run(c, "read cody_cli/code_cmds.py --around 100 --window 5")
         check("R10 --around window 5 -> 11 lines", "95-105/" in o and len(o.splitlines()) == 12, o[:80])
 
         o = await run(c, "read core/structure.py --outline")

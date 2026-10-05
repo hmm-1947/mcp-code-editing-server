@@ -8,8 +8,9 @@ from pathlib import Path
 from code_engine.finder import find_symbols_in_file, list_classes, list_functions
 from code_engine.languages import LANGUAGES
 from code_engine.replace import build_function_replacement, fuzzy_find_text
-from core import history, search as text_search, structure, terminal
+from core import search as text_search, structure, terminal
 from core.diff import unified
+from core import history
 from core.syntax_check import check_python_syntax
 
 from . import outline

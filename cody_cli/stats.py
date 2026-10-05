@@ -5,7 +5,9 @@ import os
 import time
 from pathlib import Path
 
-LOG = Path(__file__).resolve().parent.parent / "tray_logs" / "cody_stats.jsonl"
+import app_paths
+
+LOG = app_paths.logs_dir() / "cody_stats.jsonl"
 
 
 def enabled() -> bool:

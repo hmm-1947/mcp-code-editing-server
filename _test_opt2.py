@@ -13,9 +13,9 @@ os.environ["CODY_NOCACHE"] = "1"
 
 from fastmcp import Client
 
-from server_v2 import mcp
+from server import mcp
 
-WS = "--ws joshua-mcp"
+WS = "--ws " + os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
 PASS = FAIL = 0
 
 

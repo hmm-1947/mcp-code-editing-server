@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import app_paths
 from config import get_workspace, resolve_path
 
 
@@ -25,7 +26,7 @@ def fail(message: str) -> str:
     return f"ERR {message}"
 
 
-ERROR_LOG = ROOT / "tray_logs" / "cody_errors.log"
+ERROR_LOG = app_paths.logs_dir() / "cody_errors.log"
 
 
 def internal_error(name: str, error: BaseException, context: str = "") -> str:

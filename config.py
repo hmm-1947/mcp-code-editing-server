@@ -10,7 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-CONFIG_FILE = Path(__file__).parent / "config.json"
+import app_paths
+
+CONFIG_FILE = app_paths.config_file()
 
 WORKSPACES: dict[str, Path] = {}
 
@@ -33,6 +35,7 @@ def load() -> None:
 
 
 def save() -> None:
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_FILE.write_text(
         json.dumps(
             {"workspaces": {name: str(path) for name, path in WORKSPACES.items()}},

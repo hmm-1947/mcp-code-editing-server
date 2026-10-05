@@ -18,6 +18,7 @@ import subprocess
 import time
 from pathlib import Path
 
+import app_paths
 from core import terminal
 
 from .common import CliError, current_workspace, path_of, root_of, take_script, to_int
@@ -185,7 +186,7 @@ def _text(blob) -> str:
 # --------------------------------------------------------------------------
 # proc: long-lived background processes (dev servers, watchers)
 # --------------------------------------------------------------------------
-PROC_DIR = Path(__file__).resolve().parent.parent / "tray_logs" / "proc"
+PROC_DIR = app_paths.logs_dir() / "proc"
 _URL = re.compile(r"https?://[^\s\"'<>\x1b]+")
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
