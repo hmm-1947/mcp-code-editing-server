@@ -11,22 +11,31 @@ Requires: pip install pystray pillow requests
 """
 
 import os
+import signal
 import subprocess
 import sys
 import threading
 import time
-import winreg
 from pathlib import Path
 from queue import Queue, Empty
 
 import tkinter as tk
 from tkinter import ttk, font as tkfont
 
-import pystray
-from pystray import MenuItem as Item
-from PIL import Image, ImageDraw
-
 import app_paths
+
+IS_WIN = sys.platform == "win32"
+IS_MAC = sys.platform == "darwin"
+
+if IS_WIN:
+    import winreg
+
+if IS_MAC:
+    pystray = Item = Image = ImageDraw = None
+else:
+    import pystray
+    from pystray import MenuItem as Item
+    from PIL import Image, ImageDraw
 
 try:
     import requests
@@ -48,9 +57,10 @@ def _resolve_project_dir():
 
 
 PROJECT_DIR = _resolve_project_dir()
-VENV_PYTHON = PROJECT_DIR / "venv" / "Scripts" / "python.exe"
+EXE_SUFFIX = ".exe" if IS_WIN else ""
+VENV_PYTHON = PROJECT_DIR / "venv" / ("Scripts" if IS_WIN else "bin") / ("python.exe" if IS_WIN else "python")
 SERVER_SCRIPT = PROJECT_DIR / "server.py"
-NGROK_EXE = str(app_paths.resource_dir() / "bin" / "ngrok.exe") if app_paths.FROZEN else "ngrok"
+NGROK_EXE = str(app_paths.resource_dir() / "bin" / f"ngrok{EXE_SUFFIX}") if app_paths.FROZEN else "ngrok"
 NGROK_PORT = 8001
 NGROK_API = "http://127.0.0.1:4040/api/tunnels"
 
@@ -61,13 +71,16 @@ NGROK_LOG = LOG_DIR / "ngrok.log"
 
 APP_NAME = "CodyMCPServer"
 
-# When frozen by PyInstaller, sys.executable IS the app's own exe path.
-# When running as a plain .py script (dev mode), fall back to the VBS launcher.
 if getattr(sys, "frozen", False):
-    APP_EXECUTABLE_CMD = f'"{sys.executable}"'
+    APP_EXECUTABLE_ARGS = [sys.executable]
 else:
-    _VBS_LAUNCHER = PROJECT_DIR / "launch_mcp_gui.vbs"
-    APP_EXECUTABLE_CMD = f'wscript.exe "{_VBS_LAUNCHER}"'
+    APP_EXECUTABLE_ARGS = [sys.executable, str(Path(__file__).resolve())]
+
+if IS_WIN:
+    if getattr(sys, "frozen", False):
+        APP_EXECUTABLE_CMD = f'"{sys.executable}"'
+    else:
+        APP_EXECUTABLE_CMD = f'wscript.exe "{PROJECT_DIR / "launch_mcp_gui.vbs"}"'
 
 ICON_PATH = app_paths.resource_dir() / "assets" / "icon.ico"
 
@@ -75,7 +88,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 
 
-CREATE_NO_WINDOW = 0x08000000
+CREATE_NO_WINDOW = 0x08000000 if IS_WIN else 0
 
 # ----------------------------------------------------------------------
 # THEME
@@ -89,6 +102,10 @@ FG = "#e7e9ea"
 FG_DIM = "#9aa0a6"
 BORDER = "#34363a"
 RED = "#e06c75"
+
+UI_FONT = "Segoe UI" if IS_WIN else "Helvetica Neue"
+UI_BOLD = "Segoe UI Semibold" if IS_WIN else "Helvetica Neue"
+MONO_FONT = "Consolas" if IS_WIN else "Menlo"
 
 
 # ----------------------------------------------------------------------
@@ -163,7 +180,7 @@ class ProcessManager:
     # -------------------- commands / process helpers --------------------
     def _server_command(self):
         if app_paths.FROZEN:
-            return [str(PROJECT_DIR / "cody-server.exe"), "--port", str(NGROK_PORT)]
+            return [str(PROJECT_DIR / f"cody-server{EXE_SUFFIX}"), "--port", str(NGROK_PORT)]
         return [str(VENV_PYTHON), str(SERVER_SCRIPT), "--port", str(NGROK_PORT)]
 
     @staticmethod
@@ -180,11 +197,17 @@ class ProcessManager:
         the real interpreter as a child; killing only the launcher could leave the port held."""
         if proc is None or proc.poll() is not None:
             return
-        subprocess.run(
-            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-            capture_output=True,
-            creationflags=CREATE_NO_WINDOW,
-        )
+        if IS_WIN:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
+        else:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except OSError:
+                pass
         try:
             proc.wait(timeout=8)
         except subprocess.TimeoutExpired:
@@ -201,6 +224,7 @@ class ProcessManager:
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             creationflags=CREATE_NO_WINDOW,
+            start_new_session=not IS_WIN,
         )
         self._start_tail("server", SERVER_LOG)
 
@@ -279,12 +303,18 @@ class ProcessManager:
 
 
 # ----------------------------------------------------------------------
-# Windows "Run on startup" registry helper
+# "Start at login" helper: Windows registry Run key / macOS LaunchAgent
 # ----------------------------------------------------------------------
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+LAUNCH_AGENT = Path.home() / "Library" / "LaunchAgents" / "com.joshua.codymcpserver.plist"
+LOGIN_LABEL = "Windows" if IS_WIN else "macOS" if IS_MAC else "login"
 
 
 def is_autostart_enabled():
+    if IS_MAC:
+        return LAUNCH_AGENT.is_file()
+    if not IS_WIN:
+        return False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_READ) as key:
             winreg.QueryValueEx(key, APP_NAME)
@@ -294,6 +324,17 @@ def is_autostart_enabled():
 
 
 def set_autostart(enabled: bool):
+    if IS_MAC:
+        if enabled:
+            import plistlib
+            LAUNCH_AGENT.parent.mkdir(parents=True, exist_ok=True)
+            with open(LAUNCH_AGENT, "wb") as fh:
+                plistlib.dump({"Label": "com.joshua.codymcpserver", "ProgramArguments": APP_EXECUTABLE_ARGS, "RunAtLoad": True}, fh)
+        else:
+            LAUNCH_AGENT.unlink(missing_ok=True)
+        return
+    if not IS_WIN:
+        raise RuntimeError("start at login is not supported on this platform")
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
         if enabled:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, APP_EXECUTABLE_CMD)
@@ -315,7 +356,7 @@ class App:
         self.root.minsize(740, 420)
         self.root.configure(bg=BG)
         try:
-            if ICON_PATH.exists():
+            if IS_WIN and ICON_PATH.exists():
                 self.root.iconbitmap(str(ICON_PATH))
         except Exception:
             pass  # icon file missing/invalid -- fall back to default
@@ -332,10 +373,16 @@ class App:
 
         self._build_style()
         self._build_ui()
-        self._build_tray()
+        self.tray_icon = None
+        if not IS_MAC:
+            self._build_tray()
 
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
-        self.root.bind("<Unmap>", self._on_minimize)
+        if IS_MAC:
+            self.root.createcommand("tk::mac::ReopenApplication", self.show_from_tray)
+            self.root.createcommand("tk::mac::Quit", self.quit_app)
+        else:
+            self.root.bind("<Unmap>", self._on_minimize)
 
         self._poll_log_queue()
         self._poll_status()
@@ -350,17 +397,17 @@ class App:
 
         style.configure("TFrame", background=BG)
         style.configure("Panel.TFrame", background=BG_PANEL)
-        style.configure("TLabel", background=BG, foreground=FG, font=("Segoe UI", 10))
-        style.configure("Dim.TLabel", background=BG, foreground=FG_DIM, font=("Segoe UI", 9))
-        style.configure("Title.TLabel", background=BG, foreground=FG, font=("Segoe UI Semibold", 15))
-        style.configure("Status.TLabel", background=BG, foreground=ACCENT, font=("Segoe UI Semibold", 11))
-        style.configure("Url.TLabel", background=BG_PANEL, foreground=ACCENT, font=("Consolas", 10))
+        style.configure("TLabel", background=BG, foreground=FG, font=(UI_FONT, 10))
+        style.configure("Dim.TLabel", background=BG, foreground=FG_DIM, font=(UI_FONT, 9))
+        style.configure("Title.TLabel", background=BG, foreground=FG, font=(UI_BOLD, 15))
+        style.configure("Status.TLabel", background=BG, foreground=ACCENT, font=(UI_BOLD, 11))
+        style.configure("Url.TLabel", background=BG_PANEL, foreground=ACCENT, font=(MONO_FONT, 10))
 
         style.configure(
             "Accent.TButton",
             background=ACCENT,
             foreground="#111",
-            font=("Segoe UI Semibold", 10),
+            font=(UI_BOLD, 10),
             borderwidth=0,
             focuscolor=ACCENT,
             padding=(14, 8),
@@ -371,7 +418,7 @@ class App:
             "Stop.TButton",
             background=BG_PANEL,
             foreground=FG,
-            font=("Segoe UI Semibold", 10),
+            font=(UI_BOLD, 10),
             borderwidth=1,
             padding=(14, 8),
         )
@@ -391,7 +438,7 @@ class App:
             "TCheckbutton",
             background=BG,
             foreground=FG,
-            font=("Segoe UI", 10),
+            font=(UI_FONT, 10),
         )
         style.map("TCheckbutton", background=[("active", BG)])
 
@@ -445,7 +492,7 @@ class App:
             bg=BG_LOG,
             fg=FG,
             insertbackground=FG,
-            font=("Consolas", 9),
+            font=(MONO_FONT, 9),
             wrap="word",
             height=10,  # small requested height; the panel still expands to fill the window,
             borderwidth=0,  # and the footer (Copy URL / autostart) is never squeezed out
@@ -471,9 +518,9 @@ class App:
 
         ngrok_label_frame = tk.Frame(footer, bg=BG_PANEL)
         ngrok_label_frame.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(ngrok_label_frame, text="Public URL", bg=BG_PANEL, fg=FG_DIM, font=("Segoe UI", 8)).pack(anchor="w")
+        tk.Label(ngrok_label_frame, text="Public URL", bg=BG_PANEL, fg=FG_DIM, font=(UI_FONT, 8)).pack(anchor="w")
         self.url_label = tk.Label(
-            ngrok_label_frame, textvariable=self.ngrok_url_text, bg=BG_PANEL, fg=ACCENT, font=("Consolas", 11, "bold")
+            ngrok_label_frame, textvariable=self.ngrok_url_text, bg=BG_PANEL, fg=ACCENT, font=(MONO_FONT, 11, "bold")
         )
         self.url_label.pack(anchor="w")
 
@@ -490,14 +537,14 @@ class App:
             activeforeground=ACCENT,
             borderwidth=1,
             relief="solid",
-            font=("Segoe UI", 9),
+            font=(UI_FONT, 9),
             padx=10,
         )
         self.copy_btn.pack(side="left")
 
         autostart_chk = ttk.Checkbutton(
             bottom_row,
-            text="Start automatically when Windows starts",
+            text=f"Start automatically when {LOGIN_LABEL} starts",
             variable=self.autostart_var,
             command=self.on_toggle_autostart,
         )
@@ -608,7 +655,8 @@ class App:
 
     def _quit_worker(self):
         self.pm.shutdown()
-        self.tray_icon.stop()
+        if self.tray_icon:
+            self.tray_icon.stop()
         self.root.after(0, self.root.destroy)
 
     # -------------------- log handling --------------------

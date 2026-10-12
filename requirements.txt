@@ -51,8 +51,8 @@ PyJWT==2.13.0
 pyperclip==1.11.0
 python-dotenv==1.2.2
 python-multipart==0.0.32
-pywin32==312
-pywin32-ctypes==0.2.3
+pywin32==312; sys_platform == "win32"
+pywin32-ctypes==0.2.3; sys_platform == "win32"
 PyYAML==6.0.3
 referencing==0.37.0
 rich==15.0.0

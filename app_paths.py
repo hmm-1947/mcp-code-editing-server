@@ -19,13 +19,21 @@ def packaged() -> bool:
     return FROZEN or bool(os.environ.get("CODY_DATA_DIR"))
 
 
+def _user_data_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "CodyMCPServer"
+    if sys.platform != "win32":
+        return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "CodyMCPServer"
+    return Path(sys.executable).resolve().parent / "data"
+
+
 def data_dir() -> Path:
     explicit = os.environ.get("CODY_DATA_DIR")
     if explicit:
         return Path(explicit)
     if FROZEN:
         registered = _registered_dir()
-        return Path(registered) if registered else Path(sys.executable).resolve().parent / "data"
+        return Path(registered) if registered else _user_data_dir()
     return ROOT
 
 
