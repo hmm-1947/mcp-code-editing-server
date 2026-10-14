@@ -26,6 +26,12 @@ srv_datas, srv_binaries, srv_hidden = [], [], []
 for package in (
     "tree_sitter", "tree_sitter_python", "tree_sitter_java",
     "tree_sitter_javascript", "tree_sitter_typescript", "tree_sitter_dart",
+    "tree_sitter_go", "tree_sitter_rust", "tree_sitter_groovy", "tree_sitter_c", "tree_sitter_cpp",
+    "tree_sitter_ruby", "tree_sitter_c_sharp", "tree_sitter_kotlin", "tree_sitter_scala",
+    "tree_sitter_php", "tree_sitter_swift", "tree_sitter_lua", "tree_sitter_zig",
+    "tree_sitter_powershell", "tree_sitter_elixir", "tree_sitter_objc", "tree_sitter_julia",
+    "tree_sitter_verilog", "tree_sitter_fortran", "tree_sitter_bash", "tree_sitter_json",
+    "numpy", "rapidfuzz",
 ):
     datas, binaries, hidden = collect_all(package)
     srv_datas += datas
@@ -59,6 +65,27 @@ for package in ("cody_cli", "core", "code_engine"):
     srv_hidden += collect_submodules(package)
 srv_hidden += ["server", "config", "app_paths"]
 
+VENDOR = os.path.join(ROOT, "third_party", "graphify")
+GRAPHIFY_PKG = os.path.join(VENDOR, "graphify")
+if not os.path.isdir(GRAPHIFY_PKG):
+    raise SystemExit(f"missing bundled graphify at {GRAPHIFY_PKG}")
+for folder, _dirs, files in os.walk(GRAPHIFY_PKG):
+    if "__pycache__" in folder:
+        continue
+    relative = os.path.relpath(folder, VENDOR).replace(os.sep, ".")
+    for file in files:
+        if file.endswith(".py"):
+            module = relative if file == "__init__.py" else relative + "." + file[:-3]
+            srv_hidden.append(module)
+srv_hidden += collect_submodules("networkx", on_error="ignore")
+
+srv_datas += [
+    (os.path.join(VENDOR, "assets"), os.path.join("third_party", "graphify", "assets")),
+    (os.path.join(VENDOR, "LICENSE"), os.path.join("licenses", "graphify")),
+    (os.path.join(VENDOR, "LICENSE-MIT"), os.path.join("licenses", "graphify")),
+    (os.path.join(VENDOR, "NOTICE"), os.path.join("licenses", "graphify")),
+]
+
 shared_datas = [(os.path.join(ROOT, "assets"), "assets")]
 for tool in ("ngrok" + EXE_EXT, "rg" + EXE_EXT):
     path = os.path.join(BIN_STAGE, tool)
@@ -88,7 +115,7 @@ gui_exe = EXE(
 # ---- server ----------------------------------------------------------------------------
 srv = Analysis(
     [os.path.join(ROOT, "server.py")],
-    pathex=[ROOT],
+    pathex=[ROOT, VENDOR],
     datas=srv_datas + shared_datas,
     binaries=srv_binaries,
     hiddenimports=srv_hidden,

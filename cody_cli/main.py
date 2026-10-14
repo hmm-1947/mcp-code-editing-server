@@ -14,6 +14,7 @@ from .code_cmds import (
 )
 from .batch_cmds import cmd_batch
 from .check_cmd import cmd_check
+from .graph_cmds import cmd_graph
 from .shell_cmds import cmd_proc, cmd_sh
 from .common import CliError, check_payload_count, fail, internal_error, set_workspace, split_line
 
@@ -43,6 +44,8 @@ batch  one command per line on the following lines, e.g. `batch` then `tree src 
       Runs in one workspace; max 20; `--stop` halts at the first error or failed sh/check/proc. b, check, sh and proc work
       inside a batch (screenshots too); payload commands (--new -) and sh --script cannot.
 ws    [list] | add NAME PATH | rm NAME       (--ws also accepts a directory path)
+graph build [--force] | update | status | tree | open [tree]   code graph (bundled graphify) in WS/graphify-out; build reuses an existing graph, update is incremental
+graph query "Q" [--dfs --budget N] | path "A" "B" [--undirected] | explain "X" [--all]   compact text; use BEFORE reading files for architecture, call-flow, dependency questions
 b     Playwright's own Chromium, NOT your installed browser (any playwright-cli command; each reply shows new console
       warnings/errors with their text). Batchable. Common ones:
         open URL | goto URL | reload | close | snapshot | find TEXT | click REF | fill REF TEXT | select REF V
@@ -63,7 +66,7 @@ Workflow: find --files -> read PATH (outline) -> read --fn NAME -> edit -> check
 COMMANDS = {
     "read": cmd_read, "find": cmd_find, "tree": cmd_tree, "sym": cmd_sym,
     "edit": cmd_edit, "new": cmd_new, "append": cmd_append, "rm": cmd_rm,
-    "undo": cmd_undo, "sh": cmd_sh, "proc": cmd_proc, "batch": cmd_batch, "check": cmd_check, "ws": cmd_ws, "b": cmd_browser,
+    "undo": cmd_undo, "sh": cmd_sh, "proc": cmd_proc, "batch": cmd_batch, "check": cmd_check, "ws": cmd_ws, "b": cmd_browser, "graph": cmd_graph,
 }
 
 

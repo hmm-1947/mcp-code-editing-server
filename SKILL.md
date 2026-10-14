@@ -1,6 +1,6 @@
 ---
 name: local-code-editing
-description: Use whenever the Cody MCP server is connected (a single tool, `run`, that takes a Cody CLI command line). Covers how to find, read and edit code with it, run shell commands and background servers, check a change, drive a browser, and batch several commands into one call. Applies to any codebase reached through this server.
+description: Use whenever the Cody MCP server is connected (a single tool, `run`, that takes a Cody CLI command line). Covers how to find, read and edit code with it, run shell commands and background servers, check a change, drive a browser, batch several commands into one call, and query a code graph (architecture, call flow, dependencies) before reading files. Applies to any codebase reached through this server.
 ---
 
 # Cody: one tool, `run(command)`
@@ -188,6 +188,49 @@ b screenshot --filename shot.png            returned as an inline image
 ```
 
 Refs (`e5`) reset on `open`, `goto` and `reload`: take a fresh `b snapshot` first.
+
+## Graph
+
+A code graph (files, symbols, classes, calls, imports) is built on demand and stored
+in `<workspace>/graphify-out`. It is bundled with Cody; nothing to install.
+
+When to use it:
+
+- Architecture, dependency, call-flow and "how does X work" questions: run
+  `graph query` BEFORE your first `find` or `read`, then `read` only the files and
+  line ranges it names.
+- "How does A reach B", "what depends on X": `graph path` / `graph explain`.
+- Not for ordinary find/read/edit of a known file. Those stay faster and cheaper.
+- No graph yet and the question is architectural: `graph build` once, then query.
+
+```
+graph status                    is there a graph, how big, how old
+graph build                     first build; reuses an existing graph without rebuilding
+graph update                    incremental refresh after code changed (cached, fast)
+graph query "how does auth work" [--dfs] [--budget N]   relevant nodes, edges and files
+graph path "AuthController" "UserRepository"            shortest relationship chain
+graph explain "AuthService"     one node and its neighbours
+graph tree | graph open [tree]  html views for the user (open launches their browser)
+```
+
+`query`, `path` and `explain` never build: with no graph they reply `no graph ... run:
+graph build`. Run `graph build` once per project (it can take a while on big repos),
+`graph update` after you changed code, never both in a row. Replies are capped (`--cap N`
+raises it).
+
+Tips:
+
+- Query with the concept or symbol names from the question, not whole sentences.
+  Vague result: rephrase with a concrete class or function name, or use `--dfs` to
+  follow one chain deeper. `--budget N` bounds the answer size.
+- `path` and `explain` take node names as `graph query` printed them. Misspelled or
+  ambiguous names are fuzzy matched; use the exact label if the wrong node comes back.
+- Edges marked EXTRACTED come straight from the code; INFERRED are the graph's best
+  guess, so confirm them with `read` before relying on them.
+- A graph can be stale after edits. Run `graph update` after a batch of changes you
+  want to query again, not after every edit.
+- `graph open` and `graph tree` are for the user to look at. Never read the html,
+  `graph.json` or `GRAPH_REPORT.md` into the conversation; ask `graph query` instead.
 
 ## Housekeeping
 

@@ -4,9 +4,22 @@
 """
 
 import argparse
+import multiprocessing
 import os
 import re
 import sys
+
+if __name__ == "__main__":
+    multiprocessing.freeze_support()
+    if len(sys.argv) > 1 and sys.argv[1] == "--graphify-worker":
+        from cody_cli.graph_worker import main as _graph_worker_main
+        sys.exit(_graph_worker_main(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == "--cli":
+        from cody_cli.main import dispatch as _cli_dispatch
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        _cli_output = _cli_dispatch(sys.argv[2:])
+        print(_cli_output)
+        sys.exit(1 if _cli_output.startswith("ERR ") else 0)
 
 from fastmcp import Context, FastMCP
 from fastmcp.utilities.types import Image
