@@ -55,6 +55,7 @@ def search(
     exclude_deps: bool = True,
     globs: list[str] | None = None,
     timeout: int = 120,
+    target: Path | None = None,
 ) -> dict:
     """Run ripgrep and return {"results": [...], "engine": "rg"|"python"}.
 
@@ -78,7 +79,7 @@ def search(
         command.append("--hidden")
     for glob in globs or []:
         command.extend(["-g", glob])
-    command.extend((pattern, str(root)))
+    command.extend((pattern, str(target or root)))
 
     try:
         process = subprocess.run(
@@ -86,13 +87,13 @@ def search(
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return {
-            "results": _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps),
+            "results": _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps, target),
             "engine": "python",
         }
 
     if process.returncode not in (0, 1):
         return {
-            "results": _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps),
+            "results": _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps, target),
             "engine": "python",
             "rg_stderr": process.stderr.strip()[:500] or None,
         }
@@ -129,11 +130,11 @@ def search(
     return {"results": results, "engine": "rg"}
 
 
-def _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps) -> list[dict]:
+def _fallback(root, pattern, regex, case_sensitive, max_results, context_lines, exclude_deps, target=None) -> list[dict]:
     flags = 0 if case_sensitive else re.IGNORECASE
     matcher = re.compile(pattern if regex else re.escape(pattern), flags)
     results: list[dict] = []
-    for file_path in iter_files(root, exclude_deps):
+    for file_path in ([target] if target is not None and target.is_file() else iter_files(root, exclude_deps)):
         if file_path.suffix.lower() in BINARY_SUFFIXES:
             continue
         try:

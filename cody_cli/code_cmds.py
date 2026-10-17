@@ -93,20 +93,69 @@ def _split_lines(text: str) -> list[str]:
     return [p[:-1] if p.endswith("\r") else p for p in parts]
 
 
+def _line_records(text: str) -> list[tuple[str, str]]:
+    parts = text.split("\n")
+    records: list[tuple[str, str]] = []
+    last = len(parts) - 1
+    for index, part in enumerate(parts):
+        if index == last:
+            if part == "":
+                break
+            if part.endswith("\r"):
+                records.append((part[:-1], "\r"))
+            else:
+                records.append((part, ""))
+        elif part.endswith("\r"):
+            records.append((part[:-1], "\r\n"))
+        else:
+            records.append((part, "\n"))
+    return records
+
+
+_LINE_PREFIX = re.compile(r"^\s*\d+\|")
+
+
+def _squash(value: str) -> str:
+    return re.sub(r"\s+", "", value)
+
+
+def _expect_matches(current: str, raw) -> bool:
+    wanted = _squash(current)
+    candidates = {unescape_flag(raw), str(raw)}
+    for candidate in list(candidates):
+        rows = candidate.replace("\r\n", "\n").split("\n")
+        if rows and all(_LINE_PREFIX.match(row) for row in rows if row.strip()):
+            candidates.add("\n".join(_LINE_PREFIX.sub("", row, count=1) for row in rows))
+    return any(_squash(candidate) == wanted for candidate in candidates)
+
+
 def _numbered(lines: list[str], first: int, last: int) -> str:
     return "\n".join(f"{n}|{lines[n - 1]}" for n in range(first, last + 1))
 
 
-def _commit(target: Path, proposed: str, existed: bool) -> None:
-    problem = structure.validate_structure(target, proposed)
-    if problem is not None:
-        raise CliError(
-            f"unbalanced brackets line {problem.get('line')}: "
-            f"expected {problem.get('expected')} found {problem.get('found')}"
-        )
-    syntax = check_python_syntax(target, proposed)
-    if syntax is not None:
-        raise CliError(f"python syntax line {syntax['line']}: {syntax['detail']}")
+def _commit(target: Path, proposed: str, existed: bool, nocheck: bool = False) -> None:
+    if not nocheck:
+        problem = structure.validate_syntax(target, proposed)
+        if problem is not None and existed:
+            try:
+                if structure.validate_syntax(target, _read_text(target)) is not None:
+                    problem = None
+            except CliError:
+                pass
+        if problem is not None:
+            if problem.get("message") == "Syntax error":
+                raise CliError(
+                    f"syntax error line {problem.get('line')} near '{problem.get('found')}' "
+                    f"({problem.get('expected')}); nothing written, pass --nocheck to write anyway"
+                )
+            raise CliError(
+                f"unbalanced brackets line {problem.get('line')}: "
+                f"expected {problem.get('expected')} found {problem.get('found')}; "
+                f"nothing written, pass --nocheck to write anyway"
+            )
+        syntax = check_python_syntax(target, proposed)
+        if syntax is not None:
+            raise CliError(f"python syntax line {syntax['line']}: {syntax['detail']}")
     if existed:
         history.snapshot(target)
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -287,6 +336,8 @@ def cmd_find(args: list[str]) -> str:
     if not positional:
         raise CliError("usage: find <query> [--files] [--in DIR] [--glob '*.py'] [--regex] [--i] [--defs] [--max N] [--ctx N]")
     query = " ".join(positional)
+    scope = path_of(flags["in"]) if flags.get("in") else None
+    target = scope if scope is not None and scope.is_file() else None
     root = root_of(flags.get("in"))
     files_only = bool(flags.get("files"))
     limit = to_int(flags.get("max", FILES_SCAN if files_only else 30), "max")
@@ -298,6 +349,7 @@ def cmd_find(args: list[str]) -> str:
         max_results=limit, context_lines=ctx,
         exclude_deps=not flags.get("deps"),
         globs=[flags["glob"]] if flags.get("glob") else None,
+        target=target,
     )
     results = found["results"]
     if not results:
@@ -408,8 +460,8 @@ def cmd_sym(args: list[str]) -> str:
 def cmd_edit(args: list[str]) -> str:
     positional, flags = split_flags(
         args,
-        {"lines", "old", "new", "fn", "expect", "show"},
-        {"all", "dry", "stdin"},
+        {"lines", "old", "new", "fn", "expect", "show", "before", "after", "insert-at"},
+        {"all", "dry", "stdin", "nocheck"},
     )
     if not positional:
         raise CliError("usage: edit <path> --lines A-B --new TEXT | --old TEXT --new TEXT [--all] | --fn NAME --new TEXT | --dry")
@@ -438,13 +490,18 @@ def cmd_edit(args: list[str]) -> str:
         lines = _split_lines(text)
         if start < 1 or end < start or end > len(lines):
             raise CliError(f"bad range {start}-{end}; file has {len(lines)} lines")
-        if "expect" in flags:
-            current = "\n".join(lines[start - 1:end])
-            if current.strip() != unescape_flag(flags["expect"]).strip():
-                raise CliError(f"expect mismatch, stale lines. current:\n{_numbered(lines, start, end)}")
-        newline = _ending(text)
+        if "expect" in flags and not _expect_matches("\n".join(lines[start - 1:end]), flags["expect"]):
+            raise CliError(f"expect mismatch, stale lines. current:\n{_numbered(lines, start, end)}")
+        records = _line_records(text)
+        fallback = _ending(text)
         body = _split_lines(_match_ending(text, new))
-        proposed = newline.join(lines[:start - 1] + body + lines[end:]) + (newline if text.endswith("\n") else "")
+        inner = records[start - 1][1] or fallback
+        tail = records[end - 1][1]
+        added = [(line, inner) for line in body]
+        if added:
+            added[-1] = (added[-1][0], tail)
+        records[start - 1:end] = added
+        proposed = "".join(content + ending for content, ending in records)
         label = f"{start}-{end} -> {start}-{start + len(body) - 1}" if body else f"{start}-{end} deleted"
         span = (start, max(start, start + len(body) - 1))
 
@@ -480,12 +537,45 @@ def cmd_edit(args: list[str]) -> str:
                 label = f"{count} replaced (first at {span[0]})"
             else:
                 label = f"1 replaced at {span[0]}-{span[1]}"
+    elif "before" in flags or "after" in flags or "insert-at" in flags:
+        if new is None:
+            raise CliError("--before/--after/--insert-at need --new")
+        records = _line_records(text)
+        fallback = _ending(text)
+        body = _split_lines(_match_ending(text, new))
+        if not body:
+            raise CliError("nothing to insert")
+        if "insert-at" in flags:
+            position = to_int(flags["insert-at"], "insert-at")
+            if position < 1 or position > len(records) + 1:
+                raise CliError(f"bad --insert-at {position}; file has {len(records)} lines (use 1-{len(records) + 1})")
+            at = position - 1
+        else:
+            key = "before" if "before" in flags else "after"
+            anchor = _match_ending(text, unescape_flag(flags[key]))
+            count = text.count(anchor) if anchor else 0
+            if count == 0:
+                raise CliError(f"--{key} anchor not found")
+            if count > 1:
+                raise CliError(f"--{key} anchor matches {count}x; make it longer or use --insert-at")
+            first_line = text.count("\n", 0, text.find(anchor)) + 1
+            at = first_line - 1 if key == "before" else first_line + anchor.count("\n")
+        neighbor = records[at - 1][1] if at > 0 else (records[0][1] if records else "")
+        glue = neighbor or fallback
+        added = [(line, glue) for line in body]
+        if at == len(records) and records and records[-1][1] == "":
+            records[-1] = (records[-1][0], glue)
+            added[-1] = (added[-1][0], "")
+        records[at:at] = added
+        proposed = "".join(content + ending for content, ending in records)
+        label = f"inserted {at + 1}-{at + len(body)}"
+        span = (at + 1, at + len(body))
     else:
-        raise CliError("nothing to do: give --lines, --old, or --fn")
+        raise CliError("nothing to do: give --lines, --old, --fn, --before, --after or --insert-at")
 
     if dry:
         return unified(text, proposed, positional[0])
-    _commit(target, proposed, existed=True)
+    _commit(target, proposed, existed=True, nocheck=bool(flags.get("nocheck")))
     reply = f"ok {label} {_short(positional[0])}"
     show = to_int(flags["show"], "show") if "show" in flags else (0 if target.suffix.lower() in SELF_CHECKED else DEFAULT_SHOW)
     if show > 0:
@@ -506,7 +596,7 @@ def _edit_context(proposed: str, span: tuple[int, int], pad: int) -> str:
 
 
 def cmd_new(args: list[str]) -> str:
-    positional, flags = split_flags(args, {"content"}, {"force"})
+    positional, flags = split_flags(args, {"content"}, {"force", "nocheck"})
     if not positional or "content" not in flags:
         raise CliError("usage: new <path> --content TEXT [--force]")
     target = path_of(positional[0])
@@ -516,12 +606,12 @@ def cmd_new(args: list[str]) -> str:
     if isinstance(flags["content"], Raw) and body and not body.endswith("\n"):
         body += "\n"
     existed = target.exists()
-    _commit(target, body, existed=existed)
+    _commit(target, body, existed=existed, nocheck=bool(flags.get("nocheck")))
     return f"ok {'overwrote' if existed else 'new'} {len(body.splitlines())}L {_short(positional[0])}"
 
 
 def cmd_append(args: list[str]) -> str:
-    positional, flags = split_flags(args, {"content"}, set())
+    positional, flags = split_flags(args, {"content"}, {"nocheck"})
     if not positional or "content" not in flags:
         raise CliError("usage: append <path> --content TEXT")
     target = path_of(positional[0])
@@ -531,7 +621,7 @@ def cmd_append(args: list[str]) -> str:
     if not body.endswith("\n"):
         body += newline
     head = text if (not text or text.endswith("\n")) else text + newline
-    _commit(target, head + body, existed=True)
+    _commit(target, head + body, existed=True, nocheck=bool(flags.get("nocheck")))
     first = len(head.splitlines()) + 1
     return f"ok +{first}-{first + len(body.splitlines()) - 1} {_short(positional[0])}"
 

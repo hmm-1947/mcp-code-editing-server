@@ -44,8 +44,13 @@ def _kind(node: Node) -> str | None:
     return None
 
 
-def _iter_definitions(tree_root: Node) -> Iterator[tuple[Node, Node, str]]:
-    """Yield each function/class definition once, including decorated Python code."""
+FUNCTION_VALUE_TYPES = frozenset({"arrow_function", "function_expression", "function", "generator_function"})
+DECLARATION_PARENTS = frozenset({"lexical_declaration", "variable_declaration"})
+
+
+def _iter_definitions(tree_root: Node, include_function_values: bool = False) -> Iterator[tuple[Node, Node, str]]:
+    """Yield each function/class definition once, including decorated Python code.
+    With include_function_values, `const f = () => {}` style declarators count too."""
     for node in walk(tree_root):
         if node.type == "decorated_definition":
             declaration = next((child for child in node.children if child.type in DECLARATION_TYPES), None)
@@ -60,6 +65,13 @@ def _iter_definitions(tree_root: Node) -> Iterator[tuple[Node, Node, str]]:
         if node.parent is not None and node.parent.type == "decorated_definition":
             continue
 
+        if include_function_values and node.type == "variable_declarator":
+            value = node.child_by_field_name("value")
+            name = node.child_by_field_name("name")
+            if value is not None and name is not None and value.type in FUNCTION_VALUE_TYPES and name.type == "identifier":
+                yield node, name, "function"
+            continue
+
         name = _name_node(node)
         kind = _kind(node)
         if name is not None and kind is not None:
@@ -67,7 +79,12 @@ def _iter_definitions(tree_root: Node) -> Iterator[tuple[Node, Node, str]]:
 
 
 def _body_end_byte(node: Node) -> int:
-    """Return the byte offset immediately after a declaration's full body."""
+    """Byte offset immediately after a declaration's full body."""
+    if node.type == "variable_declarator":
+        parent = node.parent
+        if parent is not None and parent.type in DECLARATION_PARENTS and len(parent.named_children) == 1:
+            return parent.end_byte
+        return node.end_byte
     if any(child.type in BODY_TYPES for child in node.children):
         return node.end_byte
 
@@ -109,7 +126,7 @@ def _find_symbols(path: str, query: str, include_bodies: bool) -> list[dict]:
     query = query.casefold()
     matches = []
 
-    for node, name_node, kind in _iter_definitions(tree.root_node):
+    for node, name_node, kind in _iter_definitions(tree.root_node, include_function_values=True):
         name = _name(source, name_node)
         if query not in name.casefold():
             continue

@@ -12,8 +12,9 @@ import tree_sitter_dart as tsdart
 LANGUAGES = {
     ".py": Language(tspython.language()),
     ".java": Language(tsjava.language()),
-    ".js": Language(tsjavascript.language()),
+    ".jsx": Language(tsjavascript.language()),
     ".ts": Language(tstypescript.language_typescript()),
+    ".tsx": Language(tstypescript.language_tsx()),
     ".dart": Language(tsdart.language()),
 }
 

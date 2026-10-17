@@ -54,24 +54,16 @@ def _with_images(output: str):
 
 
 INSTRUCTIONS = (
-    "One tool: run(command). The command is a Cody CLI line, e.g. "
-    "`read src/app.py:40-80`, `find handleLogin --glob '*.dart'`, "
-    "`edit src/app.py --lines 44-46 --new 'x = 1'`, `sh pytest -q`, `b open https://example.com`. "
-    "Start with `help` for the full command list. Prefix `--ws NAME` to use a saved workspace. "
-    "Multi-line code: put the text on the lines after the command and give a text flag a marker. "
-    "`--new -` takes all the remaining text, e.g. `edit f.py --lines 4-6 --new -` then the new code below. "
-    "For several payloads use `--old <<A --new <<B`: each runs up to a line that is exactly its tag "
-    "(pick a tag that cannot appear alone on a line in the text). A count mismatch is an ERR and nothing is written."
+    "One tool: run(command), a Cody CLI line, e.g. `read src/app.py:40-80`. "
+    "Use `help` for the full command list."
 )
 
 mcp = FastMCP("Cody", instructions=INSTRUCTIONS)
 
-# The single-tool schema tells an agent nothing, so the cheat sheet rides in the
-# tool description itself: zero `help` calls per session. Derived from HELP so
-# the two can never drift apart.
 TOOL_DESCRIPTION = (
-    "Run one Cody CLI command (code read/search/edit, shell, background processes, browser). "
-    "Put the command in `command`; multi-line text goes on the following lines.\n\n" + HELP
+    "Run one Cody CLI command: find read sym tree edit new append rm undo sh proc check batch ws graph b stats. "
+    "Put `--ws NAME|PATH` first. Multi-line text goes on the lines after the command (`--new -`, or `<<TAG`). "
+    "Use the local-code-editing skill to learn usage."
 )
 
 RAW_HEADS = ("sh", "batch", "proc", "check")

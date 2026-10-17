@@ -103,7 +103,6 @@ def validate_structure(path: str | Path, content: str) -> dict | None:
                 # Unterminated regex literal - bail out of regex mode rather
                 # than swallowing the rest of the file.
                 in_regex = False
-                line += 1
                 continue
             index += 1
             continue
@@ -169,3 +168,55 @@ def validate_structure(path: str | Path, content: str) -> dict | None:
             "found": "end of file",
         }
     return None
+
+
+TREE_SITTER_EXTENSIONS = frozenset({".js", ".jsx", ".ts", ".tsx"})
+_UNAVAILABLE = object()
+
+
+def _first_syntax_error(root):
+    stack = [root]
+    while stack:
+        node = stack.pop()
+        if node.is_missing or node.type == "ERROR":
+            return node
+        for child in reversed(node.children):
+            if child.has_error or child.is_missing or child.type == "ERROR":
+                stack.append(child)
+    return None
+
+
+def _tree_sitter_problem(suffix: str, content: str):
+    try:
+        from tree_sitter import Parser
+        from code_engine.languages import LANGUAGES
+
+        parser = Parser()
+        parser.language = LANGUAGES[suffix]
+        tree = parser.parse(content.encode("utf-8"))
+    except Exception:
+        return _UNAVAILABLE
+    if not tree.root_node.has_error:
+        return None
+    node = _first_syntax_error(tree.root_node)
+    if node is None:
+        return None
+    row = node.start_point[0]
+    lines = content.split("\n")
+    snippet = lines[row].strip()[:60] if row < len(lines) else ""
+    return {
+        "message": "Syntax error",
+        "line": row + 1,
+        "expected": f"missing {node.type}" if node.is_missing else "valid syntax",
+        "found": snippet,
+    }
+
+
+def validate_syntax(path: str | Path, content: str) -> dict | None:
+    """Real parser check for JS/TS/JSX/TSX (tree-sitter); bracket balance for the rest."""
+    suffix = Path(path).suffix.lower()
+    if suffix in TREE_SITTER_EXTENSIONS:
+        result = _tree_sitter_problem(suffix, content)
+        if result is not _UNAVAILABLE:
+            return result
+    return validate_structure(path, content)

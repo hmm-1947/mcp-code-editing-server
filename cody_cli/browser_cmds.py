@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from .common import CliError
@@ -13,6 +15,11 @@ BROWSER_DIR = Path(tempfile.gettempdir()) / "cody_browser"
 MAX_CHARS = 3500
 TIMEOUT = 120
 SNAPSHOT_CMDS = {"snapshot", "find"}
+ATTACH_NAME = "chrome"
+BRAVE_PATHS = (
+    r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+    r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+)
 
 _CODE_BLOCK = re.compile(r"### Ran Playwright code\s*```js.*?```\s*", re.S)
 _SNAPSHOT_LINK = re.compile(r"### Snapshot\s*\n- \[Snapshot\]\(([^)]+)\)")
@@ -247,11 +254,41 @@ def cmd_browser(args: list[str]) -> str:
     if sub == "reload" and not full:          # a reload is almost always "did my change break anything?"
         errors_only = True
     BROWSER_DIR.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    close_welcome = False
+    if os.environ.get("CODY_BROWSER_MODE", "extension") == "extension":
+        exe = env.get("CODY_BROWSER_EXE") or next((p for p in BRAVE_PATHS if Path(p).is_file()), "")
+        if exe:
+            env["PLAYWRIGHT_MCP_EXECUTABLE_PATH"] = exe
+        if sub in ("open", "attach"):
+            urls = [a for a in args[1:] if not a.startswith("-")]
+            alive = subprocess.run(
+                [*_command_prefix(), "list"],
+                cwd=str(BROWSER_DIR), env=env, capture_output=True, encoding="utf-8", errors="replace",
+                timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+            )
+            if f"`{ATTACH_NAME}`" in (alive.stdout or "") or f"{ATTACH_NAME}:" in (alive.stdout or ""):
+                args = ["goto", urls[0]] if urls else ["snapshot"]
+                sub = args[0]
+            else:
+                subprocess.run(
+                    [*_command_prefix(), "attach", f"--extension={ATTACH_NAME}"],
+                    cwd=str(BROWSER_DIR), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+                )
+                args = ["tab-new", *urls[:1]]
+                sub = "tab-new"
+                close_welcome = True
+        args = [f"-s={ATTACH_NAME}", *args]
+    elif sub == "open":
+        if "--headed" not in args:
+            args = [*args, "--headed"]
     command = [*_command_prefix(), *args]
     try:
         process = subprocess.run(
             command,
             cwd=str(BROWSER_DIR),
+            env=env,
             capture_output=True,
             encoding="utf-8",
             errors="replace",
@@ -262,6 +299,13 @@ def cmd_browser(args: list[str]) -> str:
         raise CliError(f"browser command timed out after {TIMEOUT}s")
     except OSError as error:
         raise CliError(f"could not start playwright-cli: {error}")
+
+    if close_welcome and process.returncode == 0:
+        subprocess.run(
+            [*_command_prefix(), f"-s={ATTACH_NAME}", "tab-close", "0"],
+            cwd=str(BROWSER_DIR), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            timeout=TIMEOUT, stdin=subprocess.DEVNULL,
+        )
 
     output = (process.stdout or "") + (("\n" + process.stderr) if process.stderr.strip() else "")
     output = _inline_snapshot_file(output, BROWSER_DIR)

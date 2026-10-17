@@ -26,8 +26,9 @@ read  PATH [PATH2..] --summary   header comment + top-level symbols (export mark
       cap 200 lines/call; --full lifts it to 400. Repeat read -> "unchanged" (--force resends)
 sym   FILE|DIR         symbols: A-B kind name, nested by indent (A-B = size for read --fn); cheap way to learn a file's structure
 tree  [DIR] [--depth N --max N --deps]   hides .git, node_modules, .cody_history, ...
-edit  PATH --lines A-B --new T [--expect T]      reply: ok A-B -> C-D path
+edit  PATH --lines A-B --new T [--expect T] [--nocheck]   reply: ok A-B -> C-D path; --nocheck skips the syntax check (also on new/append)
 edit  PATH --old T --new T [--all] | --fn NAME --new T   reply: ok 1 replaced at L1-L2 path; --dry = diff
+      insert: --before A | --after A | --insert-at N with --new T (A = text unique in the file; adds lines, replaces nothing)
       context: --show N adds N lines around the edit (--show 0 = none). Default 2 for json/md/html/css/yaml (not
       syntax-checked); none for code (checked on write, run `check` for types).
 new PATH --content T [--force] (makes parent dirs) | append PATH --content T | rm PATH | undo PATH
@@ -42,7 +43,7 @@ proc  start NAME [--ready TEXT] [--wait S=30] [--cwd D] [--shell ..] -- CMD  | l
 check [--what] [--cmd C] [--timeout S]   autodetects tsc / npm script / dart / cargo / go / ruff; ok X clean | FAIL
 batch  one command per line on the following lines, e.g. `batch` then `tree src --depth 3` / `read a.json b.json`.
       Runs in one workspace; max 20; `--stop` halts at the first error or failed sh/check/proc. b, check, sh and proc work
-      inside a batch (screenshots too); payload commands (--new -) and sh --script cannot.
+      inside a batch (screenshots too); multi-line text: --new <<X, text on the next lines, closing line X. --new - and sh --script cannot.
 ws    [list] | add NAME PATH | rm NAME       (--ws also accepts a directory path)
 graph build [--force] | update | status | tree | open [tree]   code graph (bundled graphify) in WS/graphify-out; build reuses an existing graph, update is incremental
 graph query "Q" [--dfs --budget N] | path "A" "B" [--undirected] | explain "X" [--all]   compact text; use BEFORE reading files for architecture, call-flow, dependency questions

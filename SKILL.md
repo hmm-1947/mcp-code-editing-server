@@ -194,14 +194,24 @@ Refs (`e5`) reset on `open`, `goto` and `reload`: take a fresh `b snapshot` firs
 A code graph (files, symbols, classes, calls, imports) is built on demand and stored
 in `<workspace>/graphify-out`. It is bundled with Cody; nothing to install.
 
-When to use it:
+Use it when:
 
-- Architecture, dependency, call-flow and "how does X work" questions: run
-  `graph query` BEFORE your first `find` or `read`, then `read` only the files and
-  line ranges it names.
-- "How does A reach B", "what depends on X": `graph path` / `graph explain`.
-- Not for ordinary find/read/edit of a known file. Those stay faster and cheaper.
-- No graph yet and the question is architectural: `graph build` once, then query.
+- The codebase is large or unfamiliar (hundreds of files) and the question is
+  architectural: "how does X work", call flow, dependencies. Run `graph query` BEFORE
+  your first `find` or `read`, then `read` only the files and line ranges it names.
+- You need relationships across many files: "what calls X", "what breaks if I change
+  X", "how does A reach B" (`graph explain` / `graph path`).
+- No graph yet and one of the above applies: `graph build` once, then query.
+
+Do not use it when:
+
+- The project is small (a few dozen files). `find` + `read` + `sym` are faster, exact
+  and always current.
+- You know the file or symbol. Just `read` or `sym` it.
+- You are about to edit. The graph only says that things are related; read the real
+  code before changing it.
+- Only `graph explain` on one symbol is cheap; `graph query` on a broad name returns
+  large, noisy replies (stdlib nodes, third-party code) that cost more than reading.
 
 ```
 graph status                    is there a graph, how big, how old

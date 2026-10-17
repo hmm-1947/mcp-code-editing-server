@@ -91,13 +91,18 @@ def resolve_path(workspace: str, path: str) -> Path:
     An absolute `path` is used as given. A relative one is joined to the
     workspace when there is one, and to the current directory when there is not.
     """
-    target = Path(path or ".").expanduser()
+    raw = path or "."
+    target = Path(raw).expanduser()
 
     if target.is_absolute():
         return target.resolve()
 
     if workspace:
-        return (get_workspace(workspace) / target).resolve()
+        base = get_workspace(workspace)
+        if not target.drive and raw[:1] in ("/", "\\"):
+            stripped = raw.lstrip("/\\")
+            target = Path(stripped or ".")
+        return (base / target).resolve()
 
     return target.resolve()
 
