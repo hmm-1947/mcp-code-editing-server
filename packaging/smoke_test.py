@@ -54,7 +54,7 @@ async def main() -> int:
             out = await call(client, f"--ws {ws} find hello")
             check("search finds text", "sample.py" in out, out)
 
-            out = await call(client, f"--ws {ws} edit sample.py --old return\\ 1 --new return\\ 2")
+            out = await call(client, f"--ws {ws} edit sample.py --old 'return 1' --new 'return 2'")
             check("edit works", out.startswith("ok"), out)
             out = await call(client, f"--ws {ws} read sample.py")
             check("edit applied", "return 2" in out, out)

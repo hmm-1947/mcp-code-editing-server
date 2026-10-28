@@ -120,7 +120,7 @@ def _inline_snapshot_file(text: str, cwd: Path) -> str:
     return _SNAPSHOT_LINK.sub(lambda _m: replacement, text, count=1)
 
 
-USAGE = "usage: b <playwright-cli command> [args]  e.g. b open URL | b snapshot | b click e6 | b fill e3 text | b press ArrowLeft | b eval \"() => document.title\" | b screenshot --filename x.png"
+USAGE = "usage: b <playwright-cli command> [args]  e.g. b open URL | b snapshot | b click e6 | b fill e3 text | b press ArrowLeft | b eval \"() => document.title\" | b screenshot -filename x.png"
 ERRORS_CMDS = {"open", "goto", "reload"}
 _PAGE_URL = re.compile(r"^- Page URL: (.*)$", re.M)
 _PAGE_TITLE = re.compile(r"^- Page Title: (.*)$", re.M)
@@ -171,7 +171,7 @@ def _pixel(args: list[str]) -> str:
 
 
 def _errors_only(output: str) -> str:
-    """For `open/goto/reload --errors`: one status line plus the console warnings and
+    """For `open/goto/reload -errors`: one status line plus the console warnings and
     errors (with text), instead of the whole page snapshot."""
     url = _PAGE_URL.search(output)
     title = _PAGE_TITLE.search(output)
@@ -199,12 +199,12 @@ _NUMBER = re.compile(r"^-?\d+(?:\.\d+)?$")
 _MAP_JS = ("() => { const sel = %s; const el = document.querySelector(sel); "
            "if (!el) return 'no element matches ' + sel; const r = el.getBoundingClientRect(); "
            "return (r.left + %s * r.width / (el.width || r.width)) + ',' + (r.top + %s * r.height / (el.height || r.height)); }")
-CLICKAT_USAGE = "usage: b clickat X Y [--right] [--canvas [CSS_SELECTOR]]   (X,Y = page px; with --canvas = canvas px, selector defaults to `canvas`)"
+CLICKAT_USAGE = "usage: b clickat X Y [-right] [-canvas [CSS_SELECTOR]]   (X,Y = page px; with -canvas = canvas px, selector defaults to `canvas`)"
 
 
 def _clickat(args: list[str]) -> str:
     """One call instead of mousemove + mousedown + mouseup."""
-    tokens = [t for t in args if t != "--right"]
+    tokens = [t for t in args if t not in ("-right", "--right")]
     right = len(tokens) != len(args)
     selector = None
     if "--canvas" in tokens:
@@ -237,9 +237,25 @@ def _clickat(args: list[str]) -> str:
     return head + ("\n[console]\n" + "\n".join(console) if console else "")
 
 
+_TEXT_SUBS = {"fill", "type", "press", "eval", "find", "keydown", "keyup", "select"}
+_KNOWN_LONG = {"errors", "full", "headed", "filename", "canvas", "right"}
+_SHORT_FLAG = re.compile(r"^-([a-z][a-z-]{2,})(=.*)?$")
+
+
+def _double_dash(sub: str, args: list[str]) -> list[str]:
+    out = [args[0]]
+    for token in args[1:]:
+        found = _SHORT_FLAG.match(token)
+        if found and (sub not in _TEXT_SUBS or found.group(1) in _KNOWN_LONG):
+            token = "-" + token
+        out.append(token)
+    return out
+
+
 def cmd_browser(args: list[str]) -> str:
     if not args:
         raise CliError(USAGE)
+    args = _double_dash(args[0], args)
     sub = args[0]
     if sub == "pixel":
         return _pixel(args[1:])
@@ -248,7 +264,7 @@ def cmd_browser(args: list[str]) -> str:
     errors_only = "--errors" in args
     if errors_only:
         if sub not in ERRORS_CMDS:
-            raise CliError(f"--errors works with: {', '.join(sorted(ERRORS_CMDS))}")
+            raise CliError(f"-errors works with: {', '.join(sorted(ERRORS_CMDS))}")
     full = sub == "reload" and "--full" in args
     args = [a for a in args if a != "--errors" and not (full and a == "--full")]
     if sub == "reload" and not full:          # a reload is almost always "did my change break anything?"

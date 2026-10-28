@@ -1,13 +1,13 @@
 """graph: code graph of the workspace, powered by the bundled graphify.
 
-    graph build [--force]            first graph, or report the existing one
-    graph update [--force]           incremental refresh (unchanged files are cached)
-    graph query "Q" [--dfs] [--budget N]
-    graph path A B [--undirected]
-    graph explain X [--all]
+    graph build [-force]            first graph, or report the existing one
+    graph update [-force]           incremental refresh (unchanged files are cached)
+    graph query "Q" [-dfs] [-budget N]
+    graph path A B [-undirected]
+    graph explain X [-all]
     graph tree                       collapsible file/symbol tree html
-    graph open [tree] [--no-launch]  interactive html (works offline)
-    graph status [--json]
+    graph open [tree] [-no-launch]  interactive html (works offline)
+    graph status [-json]
 
 Output lives in <workspace>/graphify-out. graphify runs in a child process so the
 server stays light and its exit codes and cwd never leak into it.
@@ -69,7 +69,7 @@ def _clip(text: str, cap: int) -> str:
         return text
     head = text[: cap * 2 // 3]
     tail = text[-(cap // 3):]
-    return f"{head}\n... [{len(text) - cap} chars clipped, narrow the question or raise --cap] ...\n{tail}"
+    return f"{head}\n... [{len(text) - cap} chars clipped, narrow the question or raise -cap] ...\n{tail}"
 
 
 def _out(root: Path) -> Path:
@@ -105,7 +105,7 @@ def _status_line(info: dict) -> str:
     if not info["exists"]:
         return "no graph yet. run: graph build"
     if info.get("corrupt"):
-        return f"graph.json unreadable (built {info['built']}). run: graph build --force"
+        return f"graph.json unreadable (built {info['built']}). run: graph build -force"
     counts = f"{info['nodes']} nodes {info['edges']} edges {info['communities']} communities" if "nodes" in info else f"{info['size'] // 1024} KB"
     pages = "html" if info["html"] else "no html (too large: use graph tree)"
     return f"graph ok | built {info['built']} | {counts} | {pages} | {info['out']}"
@@ -158,18 +158,18 @@ def _passthrough(root: Path, args: list[str], cap: int, timeout: int = QUERY_TIM
 
 def _query(root: Path, positional: list[str], flags: dict, cap: int) -> str:
     if not positional:
-        raise CliError('usage: graph query "question" [--dfs] [--budget N]')
+        raise CliError('usage: graph query "question" [-dfs] [-budget N]')
     args = ["query", " ".join(positional)]
     if flags.get("dfs"):
         args.append("--dfs")
     if flags.get("budget"):
-        args += ["--budget", str(to_int(flags["budget"], "--budget"))]
+        args += ["--budget", str(to_int(flags["budget"], "-budget"))]
     return _passthrough(root, args, cap)
 
 
 def _path(root: Path, positional: list[str], flags: dict, cap: int) -> str:
     if len(positional) != 2:
-        raise CliError('usage: graph path "A" "B" [--undirected]')
+        raise CliError('usage: graph path "A" "B" [-undirected]')
     args = ["path", positional[0], positional[1]]
     if flags.get("undirected"):
         args.append("--undirected")
@@ -178,7 +178,7 @@ def _path(root: Path, positional: list[str], flags: dict, cap: int) -> str:
 
 def _explain(root: Path, positional: list[str], flags: dict, cap: int) -> str:
     if not positional:
-        raise CliError('usage: graph explain "name" [--all]')
+        raise CliError('usage: graph explain "name" [-all]')
     args = ["explain", " ".join(positional)]
     if flags.get("all"):
         args.append("--all")
@@ -253,7 +253,7 @@ def cmd_graph(args: list[str]) -> str:
         bool_flags={"dfs", "undirected", "all", "force", "json", "no-launch"},
     )
     root = root_of(flags.get("ws-path"))
-    cap = to_int(flags["cap"], "--cap") if flags.get("cap") else DEFAULT_CAP
+    cap = to_int(flags["cap"], "-cap") if flags.get("cap") else DEFAULT_CAP
     force = bool(flags.get("force"))
     if action == "build":
         return _build(root, force)

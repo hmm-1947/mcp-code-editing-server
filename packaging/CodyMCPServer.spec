@@ -13,6 +13,7 @@ from PyInstaller.utils.hooks import (
 
 IS_WIN = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
+IS_LINUX = not IS_WIN and not IS_MAC
 EXE_EXT = ".exe" if IS_WIN else ""
 
 ROOT = os.path.dirname(os.path.abspath(SPECPATH))
@@ -89,28 +90,31 @@ srv_datas += [
 shared_datas = [(os.path.join(ROOT, "assets"), "assets")]
 for tool in ("ngrok" + EXE_EXT, "rg" + EXE_EXT):
     path = os.path.join(BIN_STAGE, tool)
+    if IS_LINUX and tool.startswith("ngrok") and not os.path.isfile(path):
+        continue
     if not os.path.isfile(path):
         raise SystemExit(f"missing {path} - run packaging{os.sep}{'build_mac.sh' if IS_MAC else 'build.ps1'}, which stages it")
     shared_datas.append((path, "bin"))
 
-# ---- GUI -------------------------------------------------------------------------------
-gui = Analysis(
-    [os.path.join(ROOT, "mcp_gui.py")],
-    pathex=[ROOT],
-    datas=shared_datas,
-    hiddenimports=[] if IS_MAC else ["pystray._win32", "PIL._tkinter_finder"],
-    excludes=["fastmcp", "mcp", "tree_sitter", "uvicorn", "starlette", "pydantic"] + (["pystray", "PIL"] if IS_MAC else []),
-    noarchive=False,
-)
-gui_pyz = PYZ(gui.pure)
-gui_exe = EXE(
-    gui_pyz, gui.scripts, [],
-    exclude_binaries=True,
-    name="CodyMCPServer",
-    icon=ICON,
-    console=False,          # no console window: it is a desktop app
-    upx=False,
-)
+# ---- GUI (not built on headless Linux) -------------------------------------------------
+if not IS_LINUX:
+    gui = Analysis(
+        [os.path.join(ROOT, "mcp_gui.py")],
+        pathex=[ROOT],
+        datas=shared_datas,
+        hiddenimports=[] if IS_MAC else ["pystray._win32", "PIL._tkinter_finder"],
+        excludes=["fastmcp", "mcp", "tree_sitter", "uvicorn", "starlette", "pydantic"] + (["pystray", "PIL"] if IS_MAC else []),
+        noarchive=False,
+    )
+    gui_pyz = PYZ(gui.pure)
+    gui_exe = EXE(
+        gui_pyz, gui.scripts, [],
+        exclude_binaries=True,
+        name="CodyMCPServer",
+        icon=ICON,
+        console=False,          # no console window: it is a desktop app
+        upx=False,
+    )
 
 # ---- server ----------------------------------------------------------------------------
 srv = Analysis(
@@ -132,13 +136,21 @@ srv_exe = EXE(
     upx=False,
 )
 
-coll = COLLECT(
-    gui_exe, gui.binaries, gui.datas,
-    srv_exe, srv.binaries, srv.datas,
-    strip=False,
-    upx=False,
-    name="CodyMCPServer",
-)
+if IS_LINUX:
+    coll = COLLECT(
+        srv_exe, srv.binaries, srv.datas,
+        strip=False,
+        upx=False,
+        name="CodyMCPServer",
+    )
+else:
+    coll = COLLECT(
+        gui_exe, gui.binaries, gui.datas,
+        srv_exe, srv.binaries, srv.datas,
+        strip=False,
+        upx=False,
+        name="CodyMCPServer",
+    )
 
 if IS_MAC:
     app = BUNDLE(

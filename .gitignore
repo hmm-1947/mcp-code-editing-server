@@ -8,3 +8,6 @@ packaging/dist_app/
 assets/icon.icns
 installer_output/
 tray_logs/
+
+android_use.json
+android_fcm_service_account.json

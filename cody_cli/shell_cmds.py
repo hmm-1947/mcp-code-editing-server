@@ -25,7 +25,7 @@ from .common import CliError, current_workspace, path_of, root_of, take_script, 
 
 SH_CAP = 4000
 SHELLS = ("cmd", "ps", "bash")
-_FLAG = re.compile(r"^--(cwd|timeout|cap|shell|script)\b\s*")
+_FLAG = re.compile(r"^--?(cwd|timeout|cap|shell|script)\b\s*")
 _NO_OUTPUT = "(no output)"
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
@@ -33,10 +33,10 @@ _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 def parse_sh(raw: str) -> tuple[str, dict]:
     """Split leading cody flags off the RAW text; the rest is the command verbatim.
 
-    `--cwd D --shell ps git log --oneline` -> flags {cwd, shell}, command
+    `-cwd D -shell ps git log -oneline` -> flags {cwd, shell}, command
     `git log --oneline`. Only recognised flags at the very start are consumed,
     so a command's own --flags always pass through untouched. A trailing
-    `--cap N` / `--timeout N` is also honoured (agents habitually append it).
+    `-cap N` / `-timeout N` is also honoured (agents habitually append it).
     """
     text = raw.strip()
     flags: dict = {}
@@ -51,7 +51,7 @@ def parse_sh(raw: str) -> tuple[str, dict]:
             continue
         value, text = _take_value(text)
         flags[name] = value
-    tail = re.search(r"\s--(cap|timeout)\s+(\d+)\s*$", text)
+    tail = re.search(r"\s--?(cap|timeout)\s+(\d+)\s*$", text)
     if tail and tail.group(1) not in flags:
         flags[tail.group(1)] = tail.group(2)
         text = text[:tail.start()]
@@ -109,7 +109,7 @@ def cmd_sh(raw: str) -> str:
     if flags.get("script") or (not body and "script" in flags):
         body = take_script("sh --script")
     if not body:
-        raise CliError("usage: sh [--shell ps|cmd|bash] [--cwd DIR] [--timeout S] [--cap N] <command> | sh --shell ps --script -  (script on the following lines)")
+        raise CliError("usage: sh [-shell ps|cmd|bash] [-cwd DIR] [-timeout S] [-cap N] <command> | sh -shell ps -script -  (script on the following lines)")
 
     reason = terminal.refusal_reason(body)
     if reason:
@@ -135,7 +135,7 @@ def cmd_sh(raw: str) -> str:
     if ok and not out and not err:
         parts.append(_NO_OUTPUT)
     if out_clipped or err_clipped:
-        parts.append("# clipped; filter the output, or --cap N")
+        parts.append("# clipped; filter the output, or -cap N")
     return "\n".join(parts)
 
 
@@ -354,23 +354,25 @@ def _unmanaged_listeners(registry: dict) -> list[str]:
 
 def _proc_start(raw: str) -> str:
     if " -- " not in f" {raw} ":
-        raise CliError("usage: proc start NAME [--ready TEXT] [--wait S] [--cwd DIR] [--shell ps|cmd|bash] -- COMMAND")
+        raise CliError("usage: proc start NAME [-ready TEXT] [-wait S] [-cwd DIR] [-shell ps|cmd|bash] -- COMMAND")
     head, _, command = f" {raw} ".partition(" -- ")
     command = command.strip()
     head_args = head.split()
     if not head_args or not command:
-        raise CliError("usage: proc start NAME [--ready TEXT] [--wait S] -- COMMAND")
+        raise CliError("usage: proc start NAME [-ready TEXT] [-wait S] -- COMMAND")
     name = head_args[0]
     opts: dict = {}
     index = 1
     while index < len(head_args):
         flag = head_args[index]
+        if re.fullmatch(r"--?(ready|wait|cwd|shell)", flag):
+            flag = "--" + flag.lstrip("-")
         if flag in ("--ready", "--wait", "--cwd", "--shell") and index + 1 < len(head_args):
             value = head_args[index + 1]
-            if flag == "--ready":                      # ready text may contain spaces
+            if flag == "--ready":
                 pieces = []
                 index += 1
-                while index < len(head_args) and not head_args[index].startswith("--"):
+                while index < len(head_args) and not re.fullmatch(r"--?(wait|cwd|shell)", head_args[index]):
                     pieces.append(head_args[index])
                     index += 1
                 opts["ready"] = " ".join(pieces)
@@ -469,7 +471,7 @@ def _proc_list(show_all: bool = False) -> str:
     rows = [f"{name} pid {entry['pid']} {'up' if _alive(entry['pid']) else 'DEAD'} {entry['command'][:60]}"
             for name, entry in registry.items()]
     if not rows:
-        rows = ["no processes started via proc" + ("" if show_all else " (`proc list --all` also scans dev ports)")]
+        rows = ["no processes started via proc" + ("" if show_all else " (`proc list -all` also scans dev ports)")]
     if show_all:
         rows += _unmanaged_listeners(registry)
     return "\n".join(rows)
@@ -478,10 +480,11 @@ def _proc_list(show_all: bool = False) -> str:
 def _proc_logs(rest: str) -> str:
     parts = rest.split()
     if not parts:
-        raise CliError("usage: proc logs NAME [--tail N]")
+        raise CliError("usage: proc logs NAME [-tail N]")
     name, tail = parts[0], 30
-    if "--tail" in parts and parts.index("--tail") + 1 < len(parts):
-        tail = max(1, to_int(parts[parts.index("--tail") + 1], "tail"))
+    flag = next((p for p in parts if p in ("-tail", "--tail")), None)
+    if flag and parts.index(flag) + 1 < len(parts):
+        tail = max(1, to_int(parts[parts.index(flag) + 1], "tail"))
     entry = _load().get(name)
     if not entry:
         raise CliError(f"no process '{name}'. `proc list` shows running ones")
@@ -499,5 +502,5 @@ def cmd_proc(raw: str) -> str:
     if action == "logs":
         return _proc_logs(rest)
     if action in ("list", "ls", ""):
-        return _proc_list(show_all="--all" in rest.split())
-    raise CliError("usage: proc start NAME [--ready TEXT] -- CMD | proc logs NAME [--tail N] | proc stop NAME | proc list [--all]")
+        return _proc_list(show_all=bool({"-all", "--all"} & set(rest.split())))
+    raise CliError("usage: proc start NAME [-ready TEXT] -- CMD | proc logs NAME [-tail N] | proc stop NAME | proc list [-all]")

@@ -62,7 +62,7 @@ def unescape(value: str) -> str:
 
 
 FILE_SUFFIX = "-file"
-TEXT_FLAGS = {"new", "old", "content", "expect"}
+TEXT_FLAGS = {"new", "old", "content", "expect", "before", "after"}
 
 
 class Raw(str):
@@ -92,6 +92,10 @@ _HEREDOC = re.compile(r"^<<([A-Za-z_][A-Za-z0-9_]*)$")
 
 def set_payloads(body: str | None) -> None:
     _BODY.set(None if body is None or not body.strip() else body)
+
+
+def peek_payload() -> str | None:
+    return _BODY.get()
 
 
 def set_workspace(name: str):
@@ -133,7 +137,7 @@ def _take_payload(name: str, marker: str) -> Raw:
 
 def take_script(label: str) -> str:
     """Consume the whole text after the command line as a raw script (no escape
-    processing). Used by `sh --script` and `batch`."""
+    processing). Used by `sh -script` and `batch`."""
     text = _BODY.get()
     if text is None:
         raise CliError(f"{label} needs the script on the lines after the command")
@@ -145,7 +149,7 @@ def _markers(args: list[str]) -> list[str]:
     found = []
     for index in range(1, len(args)):
         previous = args[index - 1]
-        if previous.startswith("--") and previous[2:] in TEXT_FLAGS and is_payload_marker(args[index]):
+        if previous.startswith("-") and previous.lstrip("-") in TEXT_FLAGS and is_payload_marker(args[index]):
             found.append(args[index])
     return found
 
@@ -158,7 +162,7 @@ def check_payload_count(args: list[str]) -> None:
             raise CliError(f"{len(markers)} payload marker(s) given but no text after the command")
         return
     if not markers:
-        raise CliError("text after the command but no `--flag -` or `--flag <<TAG` to receive it")
+        raise CliError("text after the command but no `-flag -` or `-flag <<TAG` to receive it")
     if "-" in markers and len(markers) > 1:
         raise CliError("`-` takes all remaining text; use <<TAG for several payloads")
     remaining = BODY
@@ -187,9 +191,12 @@ def split_flags(args: list[str], value_flags: set[str], bool_flags: set[str]) ->
     value_flags = value_flags | set(file_flags)
     positional: list[str] = []
     flags: dict = {}
+    known = value_flags | set(bool_flags)
     index = 0
     while index < len(args):
         arg = args[index]
+        if arg[:1] == "-" and arg[1:2] != "-" and len(arg) > 1 and arg[1:].split("=", 1)[0] in known:
+            arg = "-" + arg
         if arg.startswith("--") and len(arg) > 2:
             name = arg[2:]
             if "=" in name:
@@ -220,6 +227,8 @@ def current_workspace() -> str:
 
 
 def path_of(raw: str) -> Path:
+    if os.name == "nt" and raw.replace("/", "\\").startswith("\\\\") and not raw.startswith(("\\\\?\\", "\\\\.\\")):
+        raise CliError(f"UNC network paths are not accessed: {raw}")
     return resolve_path(current_workspace(), raw)
 
 

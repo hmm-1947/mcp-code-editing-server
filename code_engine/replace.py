@@ -34,6 +34,14 @@ def build_function_replacement(
     return new_source, start_line, end_line
 
 
+_QUOTE_FIX = {0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"'}
+
+
+def _loose(line: str) -> str:
+    escaped = re.escape(line.strip().translate(_QUOTE_FIX))
+    return escaped.replace("'", "['\u2018\u2019]").replace('"', '["\u201c\u201d]')
+
+
 def fuzzy_find_text(text: str, old_text: str):
     """Find old_text in text tolerating differences in leading whitespace
     and blank-line spacing. Returns (start_idx, end_idx) into text, or
@@ -43,7 +51,7 @@ def fuzzy_find_text(text: str, old_text: str):
 
     # \r?\n so a CRLF file still matches an LF-separated snippet.
     pattern = r"\r?\n".join(
-        r"[ \t]*" + re.escape(line.strip()) + r"[ \t]*"
+        r"[ \t]*" + _loose(line) + r"[ \t]*"
         for line in old_text.replace("\r\n", "\n").split("\n")
     )
     match = re.search(pattern, text)

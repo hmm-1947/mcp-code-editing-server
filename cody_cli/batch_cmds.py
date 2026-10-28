@@ -1,22 +1,22 @@
 """batch: run several cody commands in one call.
 
-    --ws jjgames batch
-    tree src --depth 3
+    -ws jjgames batch
+    tree src -depth 3
     read package.json vite.config.ts
-    find registry --files
+    find registry -files
 
 One command per line. Blank lines and lines starting with # are ignored.
 Output is each command's result under a `== cmd` header. Everything runs in the
-same workspace, so `--ws` is only needed once. Multi-line text works with heredoc
-tags: put `<<TAG` after --new/--old/--content/--expect and the text on the
+same workspace, so `-ws` is only needed once. Multi-line text works with heredoc
+tags: put `<<TAG` after -new/-old/-content/-expect and the text on the
 following lines, ending at a line that is exactly TAG:
 
-    edit a.py --lines 4-6 --new <<X
+    edit a.py -lines 4-6 -new <<X
     new code
     X
 
-`--new -` (take everything) and `sh --script` can't be batched. A search tool such
-as findstr/grep/rg that exits 1 (no match) is not a failure for `--stop`.
+`-new -` (take everything) and `sh -script` can't be batched. A search tool such
+as findstr/grep/rg that exits 1 (no match) is not a failure for `-stop`.
 """
 
 from __future__ import annotations
@@ -24,13 +24,15 @@ from __future__ import annotations
 import re
 
 from .common import CliError, check_payload_count, internal_error, set_payloads, split_line, take_script
+from .err_cmds import record as record_failure
 
-MAX_COMMANDS = 20
+MAX_COMMANDS = 100
 NOT_BATCHABLE = {"batch"}                   # nested batch
 RAW_IN_BATCH = {"sh", "check", "proc"}      # take the raw line, not shlex tokens (b takes tokens, so it batches normally)
 STOP_ON_ERROR_DEFAULT = False
 NO_MATCH_TOOLS = frozenset({"findstr", "grep", "egrep", "fgrep", "rg", "diff", "fc", "cmp"})
-_TAG_FLAG = re.compile(r"--(?:new|old|content|expect)\s+<<([A-Za-z_][A-Za-z0-9_]*)(?=\s|$)")
+_TEXT_TOKENS = frozenset(prefix + name for prefix in ("--", "-") for name in ("new", "old", "content", "expect", "before", "after"))
+_TAG_FLAG = re.compile(r"--?(?:new|old|content|expect|before|after)\s+<<([A-Za-z_][A-Za-z0-9_]*)(?=\s|$)")
 
 
 def _heredoc_tags(line: str) -> list[str]:
@@ -41,8 +43,21 @@ def _heredoc_tags(line: str) -> list[str]:
     return [
         tokens[i][2:]
         for i in range(1, len(tokens))
-        if tokens[i - 1] in ("--new", "--old", "--content", "--expect") and re.fullmatch(r"<<[A-Za-z_][A-Za-z0-9_]*", tokens[i])
+        if tokens[i - 1] in _TEXT_TOKENS and re.fullmatch(r"<<[A-Za-z_][A-Za-z0-9_]*", tokens[i])
     ]
+
+
+def _join_quoted(rows: list[str], index: int, line: str) -> tuple[str, int]:
+    probe, cursor = line, index
+    while True:
+        try:
+            split_line(probe)
+            return probe, cursor
+        except ValueError:
+            if cursor >= len(rows):
+                return line, index
+            probe += "\n" + rows[cursor].rstrip("\r")
+            cursor += 1
 
 
 def _parse_script(script: str) -> list[tuple[str, str | None]]:
@@ -55,6 +70,8 @@ def _parse_script(script: str) -> list[tuple[str, str | None]]:
         index += 1
         if not line or line.startswith("#"):
             continue
+        if line.split(None, 1)[0] not in RAW_IN_BATCH:
+            line, index = _join_quoted(rows, index, line)
         payload = None
         tags = _heredoc_tags(line)
         if tags:
@@ -75,7 +92,7 @@ def _parse_script(script: str) -> list[tuple[str, str | None]]:
 def cmd_batch(raw: str) -> str:
     from .main import COMMANDS, fail          # late import: main imports this module
 
-    stop = "--stop" in raw.split()[:2]
+    stop = bool({"--stop", "-stop"} & set(raw.split()[:2]))
     script = take_script("batch")
     commands = _parse_script(script)
     if not commands:
@@ -83,6 +100,7 @@ def cmd_batch(raw: str) -> str:
     if len(commands) > MAX_COMMANDS:
         raise CliError(f"batch takes at most {MAX_COMMANDS} commands (got {len(commands)})")
 
+    group: tuple[int, str] | None = None
     sections: list[str] = []
     for line, payload in commands:
         try:
@@ -93,8 +111,8 @@ def cmd_batch(raw: str) -> str:
                 break
             continue
         name = argv[0]
-        if name.startswith("--"):
-            sections.append(f"== {line}\n{fail('put --ws before `batch`, once, not on each line')}")
+        if name.startswith("-"):
+            sections.append(f"== {line}\n{fail('put -ws before `batch`, once, not on each line')}")
             continue
         if name in NOT_BATCHABLE or name not in COMMANDS:
             reason = "cannot be batched" if name in NOT_BATCHABLE else "unknown command"
@@ -110,7 +128,7 @@ def cmd_batch(raw: str) -> str:
             continue
         rest = argv[1:]
         if any(tok == "-" for tok in rest):
-            sections.append(f"== {line}\n{fail('`--new -` cannot be batched; use --new <<TAG with the text on the next lines')}")
+            sections.append(f"== {line}\n{fail('`-new -` cannot be batched; use -new <<TAG with the text on the next lines')}")
             if stop:
                 break
             continue
@@ -124,10 +142,54 @@ def cmd_batch(raw: str) -> str:
             output = internal_error(name, error, "batch mode")
         finally:
             set_payloads(None)
-        sections.append(f"== {line}\n{output}")
+        output = record_failure(name, rest, payload, output)
+        compact = _compact_edit(name, output)
+        if compact is not None and "\n" in output:
+            sections.append(f"E {compact[0]}: {compact[1]}\n{output.split(chr(10), 1)[1]}")
+            group = None
+        elif compact is not None:
+            if group is not None and group[0] == len(sections) - 1 and group[1] == compact[0]:
+                sections[-1] += ", " + compact[1]
+            else:
+                sections.append(f"E {compact[0]}: {compact[1]}")
+                group = (len(sections) - 1, compact[0])
+        else:
+            sections.append(output if name == "read" and not output.startswith("ERR") else f"== {line}\n{output}")
         if stop and output.startswith("ERR"):
             break
-    return "\n".join(sections)
+    return "\n".join("S " + s[6:] if s.startswith("== sh ") else s for s in sections)
+
+
+_EDIT_FORMS = (
+    (re.compile(r"ok inserted (\d+)(?:-(\d+))? (.+)"), "ins"),
+    (re.compile(r"ok (\d+)-(\d+) -> (\d+)-(\d+) (.+)"), "rep"),
+    (re.compile(r"ok (\d+)-(\d+) deleted (.+)"), "del"),
+    (re.compile(r"ok 1 replaced at (\d+)-(\d+) (.+)"), "old"),
+)
+
+
+def _span(a: str, b: str | None) -> str:
+    return a if b is None or a == b else f"{a}-{b}"
+
+
+def _compact_edit(name: str, output: str) -> tuple[str, str] | None:
+    if name != "edit":
+        return None
+    head = output.split("\n", 1)[0]
+    for pattern, kind in _EDIT_FORMS:
+        found = pattern.fullmatch(head)
+        if not found:
+            continue
+        g = found.groups()
+        if kind == "ins":
+            return g[2], "+" + _span(g[0], g[1])
+        if kind == "rep":
+            before, after = _span(g[0], g[1]), _span(g[2], g[3])
+            return g[4], before if before == after else f"{before}→{after}"
+        if kind == "del":
+            return g[2], "x" + _span(g[0], g[1])
+        return g[2], "~" + _span(g[0], g[1])
+    return None
 
 
 def _sh_tool(line: str) -> str:

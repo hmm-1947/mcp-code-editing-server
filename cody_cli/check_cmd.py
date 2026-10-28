@@ -1,9 +1,9 @@
 """check: autodetect the project's type/lint checker and run it.
 
     check                run the detected checker in the workspace
-    check --what         only print what would run
-    check --cmd "..."    override the command
-    check --timeout S    default 180
+check -what          only print what would run
+check -cmd "..."     override the command
+check -timeout S     default 180
 
 Detection is by marker file, first match wins. Output is the checker's own,
 capped by the same head+tail clipping as `sh`.
@@ -12,6 +12,7 @@ capped by the same head+tail clipping as `sh`.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -47,18 +48,24 @@ def detect(root: Path) -> tuple[str, str] | None:
     return None
 
 
+def _flag(tokens: list[str], name: str) -> int:
+    for form in (f"-{name}", f"--{name}"):
+        if form in tokens:
+            return tokens.index(form)
+    return -1
+
+
 def cmd_check(raw: str) -> str:
     tokens = raw.split()
-    what_only = "--what" in tokens
+    what_only = _flag(tokens, "what") >= 0
     override = None
     timeout = 180
-    if "--cmd" in tokens:
-        after = raw.split("--cmd", 1)[1].strip()
+    if _flag(tokens, "cmd") >= 0:
+        after = re.split(r"(?:^|\s)--?cmd\b", raw, maxsplit=1)[1].strip()
         override = after.strip("\"'") if after else None
-    if "--timeout" in tokens:
-        index = tokens.index("--timeout")
-        if index + 1 < len(tokens):
-            timeout = to_int(tokens[index + 1], "timeout")
+    index = _flag(tokens, "timeout")
+    if index >= 0 and index + 1 < len(tokens):
+        timeout = to_int(tokens[index + 1], "timeout")
 
     root = root_of(None)
     if override:
@@ -66,11 +73,11 @@ def cmd_check(raw: str) -> str:
     else:
         found = detect(root)
         if found is None:
-            raise CliError("no checker detected (looked for tsconfig.json, package.json scripts, pubspec.yaml, Cargo.toml, go.mod, python). use: check --cmd \"...\"")
+            raise CliError("no checker detected (looked for tsconfig.json, package.json scripts, pubspec.yaml, Cargo.toml, go.mod, python). use: check -cmd \"...\"")
         label, command = found
     if what_only:
         return f"{label}: {command}"
-    result = cmd_sh(f"--timeout {timeout} {command}")
+    result = cmd_sh(f"-timeout {timeout} {command}")
     first, _, rest = result.partition("\n")
     if first == "exit 0":
         return f"ok {label} clean" + (f"\n{rest}" if rest and rest != "(no output)" else "")
