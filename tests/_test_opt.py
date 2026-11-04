@@ -1,3 +1,4 @@
+import sys as _s, pathlib as _p; _s.path.insert(0, str(_p.Path(__file__).resolve().parent.parent))
 import asyncio
 import os
 
@@ -8,7 +9,7 @@ from fastmcp import Client
 
 from server import mcp
 
-WS = "--ws " + os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+WS = "--ws " + os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
 PASS = FAIL = 0
 
 

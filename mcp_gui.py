@@ -273,6 +273,11 @@ class ProcessManager:
             self.ngrok_proc = None
             self.server_proc = None
             self.running = False
+        try:
+            from agent.lmstudio import cleanup_from_state
+            cleanup_from_state()
+        except Exception:
+            pass
 
     def restart_all(self):
         self.stop_all()
@@ -352,8 +357,10 @@ class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Cody MCP Server")
-        self.root.geometry("820x560")
-        self.root.minsize(740, 420)
+        self.root.geometry(
+            f"{min(1000, self.root.winfo_screenwidth() - 80)}x{min(820, self.root.winfo_screenheight() - 120)}"
+        )
+        self.root.minsize(820, 560)
         self.root.configure(bg=BG)
         try:
             if IS_WIN and ICON_PATH.exists():
@@ -365,10 +372,11 @@ class App:
         self.log_buffers = {"server": [], "ngrok": []}
         self.current_stream = tk.StringVar(value="server")
         self.status_text = tk.StringVar(value="Stopped")
-        self.ngrok_url_text = tk.StringVar(value="ngrok URL: —")
+        self.ngrok_url = ""
         self.autostart_var = tk.BooleanVar(value=is_autostart_enabled())
 
         self.pm = ProcessManager(log_callback=self._on_log_line)
+        self.agents_window = None
         self.pm.clear_callback = self._on_logs_cleared
 
         self._build_style()
@@ -424,6 +432,13 @@ class App:
         )
         style.map("Stop.TButton", background=[("active", "#33353a")], foreground=[("disabled", FG_DIM)])
 
+        style.configure("AgentOn.TButton", background=BG_PANEL, foreground=ACCENT, font=(UI_BOLD, 10),
+                        borderwidth=1, padding=(14, 8))
+        style.map("AgentOn.TButton", background=[("active", "#33353a")])
+        style.configure("AgentOff.TButton", background=BG_PANEL, foreground=FG_DIM, font=(UI_BOLD, 10),
+                        borderwidth=1, padding=(14, 8))
+        style.map("AgentOff.TButton", background=[("active", "#33353a")])
+
         style.configure(
             "TCombobox",
             fieldbackground=BG_PANEL,
@@ -442,6 +457,11 @@ class App:
         )
         style.map("TCheckbutton", background=[("active", BG)])
 
+        style.configure("Main.TNotebook", background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure("Main.TNotebook.Tab", background=BG, foreground=FG_DIM, padding=(22, 9),
+                        borderwidth=0, font=(UI_BOLD, 10))
+        style.map("Main.TNotebook.Tab", background=[("selected", BG_PANEL)], foreground=[("selected", ACCENT)])
+
     # -------------------- UI layout --------------------
     def _build_ui(self):
         pad = 16
@@ -455,6 +475,22 @@ class App:
         self.status_dot.pack(side="right", padx=(0, 6), pady=4)
         self._draw_dot(RED)
         ttk.Label(header, textvariable=self.status_text, style="Status.TLabel").pack(side="right", padx=(0, 8))
+        self.copy_btn = tk.Button(
+            header,
+            text="Copy",
+            command=self.copy_url,
+            bg=BG_PANEL,
+            fg=ACCENT,
+            activebackground="#33353a",
+            activeforeground=ACCENT,
+            disabledforeground=FG_DIM,
+            borderwidth=1,
+            relief="solid",
+            font=(UI_FONT, 9),
+            padx=8,
+            state="disabled",
+        )
+        self.copy_btn.pack(side="right", padx=(0, 8))
 
         # controls row
         controls = ttk.Frame(self.root)
@@ -469,86 +505,50 @@ class App:
         self.restart_btn = ttk.Button(controls, text="⟳  Restart", style="Stop.TButton", command=self.on_restart)
         self.restart_btn.pack(side="left", padx=(8, 0))
 
-        # log stream selector
-        sel_frame = ttk.Frame(controls)
-        sel_frame.pack(side="right")
-        ttk.Label(sel_frame, text="Log:", style="Dim.TLabel").pack(side="left", padx=(0, 6))
-        self.log_selector = ttk.Combobox(
-            sel_frame,
-            textvariable=self.current_stream,
-            values=["server", "ngrok"],
-            state="readonly",
-            width=10,
-        )
-        self.log_selector.pack(side="left")
-        self.log_selector.bind("<<ComboboxSelected>>", lambda e: self._refresh_log_view())
-
-        # log panel
-        log_panel = tk.Frame(self.root, bg=BG_LOG, highlightbackground=BORDER, highlightthickness=1)
-        log_panel.pack(fill="both", expand=True, padx=pad, pady=(0, 10))
-
-        self.log_text = tk.Text(
-            log_panel,
-            bg=BG_LOG,
-            fg=FG,
-            insertbackground=FG,
-            font=(MONO_FONT, 9),
-            wrap="word",
-            height=10,  # small requested height; the panel still expands to fill the window,
-            borderwidth=0,  # and the footer (Copy URL / autostart) is never squeezed out
-            padx=10,
-            pady=8,
-            state="disabled",
-        )
-        scrollbar = ttk.Scrollbar(log_panel, command=self.log_text.yview)
-        self.log_text.configure(yscrollcommand=scrollbar.set)
-        self.log_text.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        self.log_text.tag_configure("dim", foreground=FG_DIM)
-        self.log_text.tag_configure("accent", foreground=ACCENT)
-
-        # footer: ngrok url + autostart checkbox
-        footer = tk.Frame(self.root, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1)
-        footer.pack(fill="x", padx=pad, pady=(0, pad))
-
-        inner = ttk.Frame(footer, style="Panel.TFrame")
-        inner.pack(fill="x", padx=12, pady=10)
-        inner.configure(style="Panel.TFrame")
-
-        ngrok_label_frame = tk.Frame(footer, bg=BG_PANEL)
-        ngrok_label_frame.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(ngrok_label_frame, text="Public URL", bg=BG_PANEL, fg=FG_DIM, font=(UI_FONT, 8)).pack(anchor="w")
-        self.url_label = tk.Label(
-            ngrok_label_frame, textvariable=self.ngrok_url_text, bg=BG_PANEL, fg=ACCENT, font=(MONO_FONT, 11, "bold")
-        )
-        self.url_label.pack(anchor="w")
-
-        bottom_row = tk.Frame(footer, bg=BG_PANEL)
-        bottom_row.pack(fill="x", padx=12, pady=(2, 10))
-
-        self.copy_btn = tk.Button(
-            bottom_row,
-            text="Copy URL",
-            command=self.copy_url,
-            bg=BG_PANEL,
-            fg=ACCENT,
-            activebackground="#33353a",
-            activeforeground=ACCENT,
-            borderwidth=1,
-            relief="solid",
-            font=(UI_FONT, 9),
-            padx=10,
-        )
-        self.copy_btn.pack(side="left")
-
-        autostart_chk = ttk.Checkbutton(
-            bottom_row,
+        self.agents_btn = ttk.Button(controls, text="Agents", style="AgentOff.TButton", command=self.on_agents)
+        self.agents_btn.pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            controls,
             text=f"Start automatically when {LOGIN_LABEL} starts",
             variable=self.autostart_var,
             command=self.on_toggle_autostart,
-        )
-        autostart_chk.pack(side="right")
+        ).pack(side="right")
+        self.agents_btn.bind("<Button-3>", lambda _e: self.toggle_agents())
+        self._refresh_agents_btn()
+        self._poll_agents_btn()
+
+
+        # log stream selector
+        self.main_nb = ttk.Notebook(self.root, style="Main.TNotebook")
+        self.log_texts = {}
+        for stream, title in (("server", "Server console"), ("ngrok", "ngrok logs")):
+            panel = tk.Frame(self.main_nb, bg=BG_LOG, highlightbackground=BORDER, highlightthickness=1)
+            self.main_nb.add(panel, text=title)
+            text = tk.Text(
+                panel,
+                bg=BG_LOG,
+                fg=FG,
+                insertbackground=FG,
+                font=(MONO_FONT, 9),
+                wrap="word",
+                height=10,
+                borderwidth=0,
+                padx=10,
+                pady=8,
+                state="disabled",
+            )
+            scrollbar = ttk.Scrollbar(panel, command=text.yview)
+            text.configure(yscrollcommand=scrollbar.set)
+            text.pack(side="left", fill="both", expand=True)
+            scrollbar.pack(side="right", fill="y")
+            text.tag_configure("dim", foreground=FG_DIM)
+            text.tag_configure("accent", foreground=ACCENT)
+            self.log_texts[stream] = text
+        self.agents_tab = tk.Frame(self.main_nb, bg=BG)
+        self.main_nb.add(self.agents_tab, text="Agents")
+        self.main_nb.bind("<<NotebookTabChanged>>", self._on_main_tab)
+
+        self.main_nb.pack(fill="both", expand=True, padx=pad, pady=(0, pad))
 
         self._set_running_ui(False)
 
@@ -636,6 +636,49 @@ class App:
         self._append_system_line("Restarting server + ngrok...")
         threading.Thread(target=self.pm.restart_all, daemon=True).start()
 
+    def _refresh_agents_btn(self):
+        try:
+            from agent import settings as agent_settings
+            on = agent_settings.enabled()
+        except Exception:
+            on = False
+        self.agents_btn.configure(text="Agents  \u25cf ON" if on else "Agents  \u25cb OFF",
+                                  style="AgentOn.TButton" if on else "AgentOff.TButton")
+
+    def _poll_agents_btn(self):
+        self._refresh_agents_btn()
+        self.root.after(2000, self._poll_agents_btn)
+
+    def toggle_agents(self):
+        from agent import settings as agent_settings
+        agent_settings.save({"enabled": not agent_settings.enabled()})
+        self._refresh_agents_btn()
+        if self.agents_window is not None:
+            self.agents_window.sync_master()
+
+    def _ensure_agents(self):
+        if self.agents_window is None:
+            try:
+                from agent_gui import AgentsWindow
+            except Exception as error:
+                tk.Label(self.agents_tab, text=f"Agents UI failed to load: {error}", bg=BG, fg=RED,
+                         font=(UI_FONT, 10)).pack(pady=24)
+                return
+            theme = {"BG": BG, "BG_PANEL": BG_PANEL, "BG_LOG": BG_LOG, "FG": FG, "FG_DIM": FG_DIM,
+                     "ACCENT": ACCENT, "ACCENT_DARK": ACCENT_DARK, "RED": RED, "BORDER": BORDER,
+                     "UI_FONT": UI_FONT, "MONO_FONT": MONO_FONT}
+            self.agents_window = AgentsWindow(self.root, theme, self.agents_tab, on_changed=self._refresh_agents_btn)
+        self.agents_window.show()
+
+    def on_agents(self):
+        self.main_nb.select(self.agents_tab)
+
+    def _on_main_tab(self, _event=None):
+        index = self.main_nb.index("current")
+        self.current_stream.set("ngrok" if index == 1 else "server")
+        if index == 2:
+            self._ensure_agents()
+
     def on_toggle_autostart(self):
         try:
             set_autostart(self.autostart_var.get())
@@ -644,10 +687,9 @@ class App:
             self.autostart_var.set(is_autostart_enabled())
 
     def copy_url(self):
-        url = self.ngrok_url_text.get().replace("ngrok URL: ", "")
-        if url and url != "—":
+        if self.ngrok_url:
             self.root.clipboard_clear()
-            self.root.clipboard_append(url)
+            self.root.clipboard_append(self.ngrok_url)
 
     def quit_app(self):
         self._append_system_line("Shutting down...")
@@ -681,55 +723,42 @@ class App:
                 buf.append(line)
                 if len(buf) > 2000:
                     del buf[: len(buf) - 2000]
-                if self.current_stream.get() == stream_name:
-                    self._append_log_line(line)
+                self._append_log_line(stream_name, line)
         except Empty:
             pass
         self.root.after(150, self._poll_log_queue)
 
     def _clear_all_logs(self):
-        self.log_buffers["server"].clear()
-        self.log_buffers["ngrok"].clear()
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        self.log_text.configure(state="disabled")
+        for stream, text in self.log_texts.items():
+            self.log_buffers[stream].clear()
+            text.configure(state="normal")
+            text.delete("1.0", "end")
+            text.configure(state="disabled")
 
-    def _append_log_line(self, line):
-        self.log_text.configure(state="normal")
+    def _append_log_line(self, stream, line):
+        text = self.log_texts[stream]
+        text.configure(state="normal")
         tag = "dim" if line.startswith("---") else ("accent" if line.startswith("*") else None)
         if tag:
-            self.log_text.insert("end", line + "\n", tag)
+            text.insert("end", line + "\n", tag)
         else:
-            self.log_text.insert("end", line + "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
-
-    def _refresh_log_view(self):
-        stream = self.current_stream.get()
-        self.log_text.configure(state="normal")
-        self.log_text.delete("1.0", "end")
-        for line in self.log_buffers[stream]:
-            tag = "dim" if line.startswith("---") else ("accent" if line.startswith("*") else None)
-            if tag:
-                self.log_text.insert("end", line + "\n", tag)
-            else:
-                self.log_text.insert("end", line + "\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
+            text.insert("end", line + "\n")
+        if int(text.index("end-1c").split(".")[0]) > 3000:
+            text.delete("1.0", "501.0")
+        text.see("end")
+        text.configure(state="disabled")
 
     # -------------------- status polling --------------------
     def _poll_status(self):
         running = self.pm.running
-        self._set_running_ui(running)
-
-        current = self.ngrok_url_text.get()
-        already_have_url = running and current.startswith("ngrok URL: http")
+        already_have_url = running and bool(self.ngrok_url)
 
         if running and not already_have_url:
-            url = self.pm.get_ngrok_url()
-            self.ngrok_url_text.set(f"ngrok URL: {url}" if url else "ngrok URL: waiting for tunnel...")
+            self.ngrok_url = self.pm.get_ngrok_url() or ""
         elif not running:
-            self.ngrok_url_text.set("ngrok URL: —")
+            self.ngrok_url = ""
+
+        self._set_running_ui(running)
 
         # once we have the URL, poll rarely (just to notice a stop/crash);
         # otherwise poll frequently while waiting for the tunnel to come up
@@ -738,7 +767,7 @@ class App:
 
     def _set_running_ui(self, running):
         if running:
-            self.status_text.set("Running")
+            self.status_text.set(self.ngrok_url or "Starting...")
             self._draw_dot(ACCENT)
             self.start_btn.configure(state="disabled")
             self.stop_btn.configure(state="normal")
@@ -749,6 +778,7 @@ class App:
             self.start_btn.configure(state="normal")
             self.stop_btn.configure(state="disabled")
             self.restart_btn.configure(state="disabled")
+        self.copy_btn.configure(state="normal" if running and self.ngrok_url else "disabled")
 
     def run(self):
         self.root.mainloop()

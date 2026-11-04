@@ -87,7 +87,7 @@ with contextlib.redirect_stdout(buf):
     server.run.fn(f"--ws {tmp} tree") if hasattr(server.run, "fn") else None
 check("P1 run() writes nothing to stdout (stdio transport safe)", buf.getvalue() == "", repr(buf.getvalue()[:80]))
 
-req = Path(__file__).with_name("requirements.txt").read_bytes()
+req = Path(__file__).resolve().parent.parent.joinpath("requirements.txt").read_bytes()
 check("R1 requirements.txt is not UTF-16", not req.startswith((b"\xff\xfe", b"\xfe\xff")), req[:4])
 
 start = time.time()

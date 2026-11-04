@@ -29,7 +29,7 @@ from cody_cli.browser_cmds import screenshot_paths
 from cody_cli.common import (
     reset_session, reset_workspace, set_payloads, set_session, set_workspace, split_line,
 )
-from cody_cli.main import HELP, dispatch, parse_line
+from cody_cli.main import _agents_on, dispatch, help_text, parse_line
 from android_use import bridge as android_bridge
 from android_use import tools as android_tools
 
@@ -69,6 +69,8 @@ TOOL_DESCRIPTION = (
     "Put `-ws NAME|PATH` first. Multi-line text goes on the lines after the command (`-new -`, or `<<TAG`). "
     "Use the local-code-editing skill to learn usage."
 )
+if _agents_on():
+    TOOL_DESCRIPTION += " `agent ask` hands read-only jobs to cheaper models (see `help`)."
 
 RAW_HEADS = ("sh", "batch", "proc", "check")
 
@@ -96,7 +98,7 @@ def run(command: str, ctx: Context | None = None) -> str | list:
         next_line, _, payload = payload.lstrip("\r\n").partition("\n")
         line = f"{line} {next_line.strip()}".strip()
     if not line:
-        return HELP
+        return help_text()
     if line.startswith("cody "):
         line = line[5:]
     try:

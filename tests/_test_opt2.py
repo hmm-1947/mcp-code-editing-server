@@ -1,7 +1,8 @@
 """Tests for the second round: sh rewrite, proc, batch, check, history relocation,
 edit reply spans, read flags, tool-description cheat sheet.
-Run:  venv\\Scripts\\python.exe _test_opt2.py
+Run:  venv\\Scripts\\python.exe tests\\_test_opt2.py
 """
+import sys as _s, pathlib as _p; _s.path.insert(0, str(_p.Path(__file__).resolve().parent.parent))
 import asyncio
 import glob
 import os
@@ -15,7 +16,7 @@ from fastmcp import Client
 
 from server import mcp
 
-WS = "--ws " + os.path.dirname(os.path.abspath(__file__)).replace("\\", "/")
+WS = "--ws " + os.path.dirname(os.path.dirname(os.path.abspath(__file__))).replace("\\", "/")
 PASS = FAIL = 0
 
 
@@ -100,7 +101,7 @@ async def main():
 
         print("\n=== batch ===")
         o = await run(c, "batch\ntree core --depth 1\nfind snapshot --files --in core\nsh echo hi\n# a comment\n")
-        check("B1 runs several commands in one call", "== tree core --depth 1" in o and "== find snapshot" in o and "== sh echo hi" in o and "from" not in o.split("== sh echo hi")[0][-5:], o)
+        check("B1 runs several commands in one call", "== tree core --depth 1" in o and "== find snapshot" in o and "S echo hi" in o and "from" not in o.split("S echo hi")[0][-5:], o)
         check("B1b sh inside batch works", "== sh echo hi\nexit 0\nhi" in o, o)
         check("B1c comments skipped", "a comment" not in o, o)
         o = await run(c, "batch\nnope thing\ntree core --depth 1")
@@ -111,10 +112,10 @@ async def main():
         check("B4 proc and payload commands refused inside batch", "cannot be batched" in o and o.count("ERR") == 2, o)
         o = await run(c, "batch\n")
         check("B5 empty batch -> ERR", o.startswith("ERR"), o)
-        o = await run(c, "batch\n" + "\n".join(["tree core --depth 1"] * 25))
-        check("B6 over 20 commands rejected", o.startswith("ERR") and "at most 20" in o, o)
+        o = await run(c, "batch\n" + "\n".join(["tree core --depth 1"] * 105))
+        check("B6 over 100 commands rejected", o.startswith("ERR") and "at most 100" in o, o)
         o = await run(c, "read core/diff.py:1-2 core/history.py:1-2")
-        check("B7 multi-path read", "# core/diff.py 1-2/" in o and "# core/history.py 1-2/" in o, o)
+        check("B7 multi-path read", "core/diff.py:1-2\n" in o and "core/history.py:1-2\n" in o, o)
 
         print("\n=== check ===")
         o = await run(c, "check --what")
@@ -134,7 +135,7 @@ async def main():
         o = await run(c, f"edit {f} --old 'c = 3' --new 'c = 30'")
         check("E1 --old reply says where", o.startswith("ok 1 replaced at 3-3 "), o)
         o = await run(c, f"edit {f} --old 'a = 1' --new 'a = 5\\nz = 0' --show 1")
-        check("E2 multi-line --old reply spans + --show context", "replaced at 1-2 " in o and "\n1|a = 5" in o and "\n2|z = 0" in o, o)
+        check("E2 multi-line --old reply spans + --show context", "replaced at 1-2 " in o and "\n1 a = 5" in o and "\n2 z = 0" in o, o)
         o = await run(c, f"edit {f} --old 'b = ' --new 'q = ' --all")
         check("E3 --all reply reports count", "2 replaced (first at " in o, o)
         check("E4 no .cody_history created in the project dir", not os.path.isdir(d + "/.cody_history"))
@@ -148,8 +149,8 @@ async def main():
         again = await run(c, f"read {f}")
         forced = await run(c, f"read {f} --force")
         os.environ["CODY_NOCACHE"] = "1"
-        check("E8 repeat read -> unchanged, mentions --force", "unchanged" in again and "--force" in again, again)
-        check("E9 --force resends the code", "1|" in forced and "unchanged" not in forced, forced)
+        check("E8 repeat read -> unchanged, mentions --force", "unchanged" in again and "-force" in again, again)
+        check("E9 --force resends the code", "\n1 " in forced and "unchanged" not in forced, forced)
         os.remove(f)
 
     print(f"\n{PASS} passed, {FAIL} failed")

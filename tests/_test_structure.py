@@ -1,5 +1,5 @@
 import sys
-sys.path.insert(0, ".")
+sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 from core.structure import validate_structure
 
 regex_with_brackets = "const pattern = /^\\.\\//;\nconst items = list.filter(function(f) {\n  return pattern.test(f.name);\n});\nconst other = a / b / c;\nconst cls = /[({]/;\n"

@@ -86,6 +86,13 @@ srv_datas += [
     (os.path.join(VENDOR, "LICENSE-MIT"), os.path.join("licenses", "graphify")),
     (os.path.join(VENDOR, "NOTICE"), os.path.join("licenses", "graphify")),
 ]
+AGENT_HIDDEN = collect_submodules("agent", filter=lambda name: not name.startswith("agent.laya_core"), on_error="ignore")
+srv_hidden += AGENT_HIDDEN + ["psutil"]
+srv_datas += [
+    (os.path.join(ROOT, "agent", "laya_core"), os.path.join("agent", "laya_core")),
+    (os.path.join(ROOT, "agent", "laya_worker.py"), "agent"),
+]
+
 
 shared_datas = [(os.path.join(ROOT, "assets"), "assets")]
 for tool in ("ngrok" + EXE_EXT, "rg" + EXE_EXT):
@@ -102,7 +109,7 @@ if not IS_LINUX:
         [os.path.join(ROOT, "mcp_gui.py")],
         pathex=[ROOT],
         datas=shared_datas,
-        hiddenimports=[] if IS_MAC else ["pystray._win32", "PIL._tkinter_finder"],
+        hiddenimports=(["agent_gui", "psutil"] + AGENT_HIDDEN) + ([] if IS_MAC else ["pystray._win32", "PIL._tkinter_finder"]),
         excludes=["fastmcp", "mcp", "tree_sitter", "uvicorn", "starlette", "pydantic"] + (["pystray", "PIL"] if IS_MAC else []),
         noarchive=False,
     )

@@ -100,7 +100,29 @@ COMMANDS["stats"] = cmd_stats
 
 
 RAW_COMMANDS = {"sh", "batch", "proc", "check"}     # take the raw line, not shlex tokens
-NO_PAYLOAD_CHECK = {"sh", "batch", "check"}         # consume trailing text themselves
+NO_PAYLOAD_CHECK = {"sh", "batch", "check", "agent"}
+
+
+def _agents_on() -> bool:
+    try:
+        from agent import settings as agent_settings
+    except Exception:
+        return False
+    return agent_settings.enabled()
+
+
+def _agent_handler():
+    if not _agents_on():
+        return None
+    from .agent_cmds import cmd_agent
+    return cmd_agent
+
+
+def help_text() -> str:
+    if not _agents_on():
+        return HELP
+    from .agent_cmds import AGENT_HELP
+    return HELP + "\n" + AGENT_HELP
 
 
 def _raw_after(raw: str | None, name: str, fallback: list[str]) -> str:
@@ -129,9 +151,11 @@ def dispatch(argv: list[str], raw: str | None = None) -> str:
         if not args:
             return fail("-ws NAME needs a command after it, e.g. `-ws NAME tree`")
     if not args or args[0] in ("help", "-h", "--help"):
-        return HELP
+        return help_text()
     name, rest = args[0], args[1:]
     handler = COMMANDS.get(name)
+    if handler is None and name == "agent":
+        handler = _agent_handler()
     if handler is None:
         return fail(f"unknown command '{name}'. try: {' '.join(sorted(COMMANDS))} | help")
     started = time.perf_counter()

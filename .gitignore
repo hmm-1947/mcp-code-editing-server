@@ -4,10 +4,20 @@ __pycache__/
 auth_token.json
 packaging/bin/
 packaging/build/
+packaging/build_new/
 packaging/dist_app/
+packaging/dist_new/
+packaging/build_new.log
 assets/icon.icns
 installer_output/
 tray_logs/
 
 android_use.json
 android_fcm_service_account.json
+agent_settings.json
+_agent_test_results.json
+_res*.json
+_test_models_results.json
+agent_models_cache.json
+packaging/iscc.log
+tests/__pycache__/

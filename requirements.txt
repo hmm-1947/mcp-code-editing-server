@@ -99,3 +99,4 @@ tree-sitter-verilog==1.0.3
 tree-sitter-zig==1.1.2
 pillow
 pypdf
+psutil==7.2.2
