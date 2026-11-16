@@ -35,7 +35,7 @@ async def main() -> int:
     env = {**os.environ, "CODY_DATA_DIR": str(data)}
     server = subprocess.Popen(
         [str(APP / ("cody-server.exe" if sys.platform == "win32" else "cody-server")), "--port", str(PORT)],
-        env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        env=env, stdout=sys.stdout, stderr=sys.stderr,
         creationflags=0x08000000 if sys.platform == "win32" else 0,
     )
     failures = []
