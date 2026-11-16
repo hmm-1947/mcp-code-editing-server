@@ -9,6 +9,7 @@ chosen data folder rather than beside the exe.
 
 import asyncio
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -45,7 +46,16 @@ async def main() -> int:
             failures.append(name)
 
     try:
-        time.sleep(6)
+        deadline = time.time() + 90
+        while time.time() < deadline:
+            if server.poll() is not None:
+                break
+            try:
+                socket.create_connection(("127.0.0.1", PORT), timeout=1).close()
+                break
+            except OSError:
+                time.sleep(1)
+
         async with Client(f"http://127.0.0.1:{PORT}/mcp") as client:
             ws = str(work).replace("\\", "/")
             out = await call(client, f"--ws {ws} sym sample.py")
