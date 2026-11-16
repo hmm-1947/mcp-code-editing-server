@@ -41,6 +41,11 @@ for size in (16, 32, 128, 256, 512):
 PYEOF
 iconutil -c icns "$ICONSET" -o assets/icon.icns
 
+if [ "$ARCH" = "x86_64" ] && command -v brew >/dev/null 2>&1; then
+  brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+  export DYLD_LIBRARY_PATH="$(brew --prefix openssl@3)/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+fi
+
 echo "==> PyInstaller"
 "$PY" -m PyInstaller packaging/CodyMCPServer.spec --noconfirm --clean \
   --distpath packaging/dist_app --workpath packaging/build
