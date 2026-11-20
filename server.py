@@ -30,8 +30,6 @@ from cody_cli.common import (
     reset_session, reset_workspace, set_payloads, set_session, set_workspace, split_line,
 )
 from cody_cli.main import HELP, dispatch, parse_line
-from android_use import bridge as android_bridge
-from android_use import tools as android_tools
 
 if app_paths.FROZEN:
     os.environ["PATH"] = str(app_paths.resource_dir() / "bin") + os.pathsep + os.environ.get("PATH", "")
@@ -57,15 +55,13 @@ def _with_images(output: str):
 
 INSTRUCTIONS = (
     "One tool: run(command), a Cody CLI line, e.g. `read src/app.py:40-80`. "
-    "Use `help` for the full command list. "
-    "Android phone control is the `android` command (`android help`)."
+    "Use `help` for the full command list."
 )
 
 mcp = FastMCP("Cody", instructions=INSTRUCTIONS)
-android_tools.register(mcp)
 
 TOOL_DESCRIPTION = (
-    "Run one Cody CLI command: find glob read sym tree edit medit new append rm undo err sh proc check batch ws graph b android stats. "
+    "Run one Cody CLI command: find glob read sym tree edit medit new append rm undo err sh proc check batch ws graph b stats. "
     "Put `-ws NAME|PATH` first. Multi-line text goes on the lines after the command (`-new -`, or `<<TAG`). "
     "Use the local-code-editing skill to learn usage."
 )
@@ -87,6 +83,20 @@ def _prefix_argv(line: str) -> list[str] | None:
 _WS_ALONE = re.compile(r"--?ws\s+(?:\"[^\"]*\"|'[^']*'|\S+)")
 
 
+def _log_run(line: str, payload: str) -> None:
+    rows = [f"[run] {line}"]
+    if payload.strip():
+        body = payload.replace("\r\n", "\n").rstrip("\n").split("\n")
+        rows.append(f"[payload] {len(body)} lines, {len(payload)} chars")
+        rows.extend(f"  | {row}" for row in body)
+    text = "\n".join(rows) + "\n"
+    try:
+        sys.stderr.write(text)
+    except UnicodeEncodeError:
+        sys.stderr.write(text.encode("ascii", "replace").decode("ascii"))
+    sys.stderr.flush()
+
+
 @mcp.tool(description=TOOL_DESCRIPTION, output_schema=None)     # no schema: the reply may be text + image content
 def run(command: str, ctx: Context | None = None) -> str | list:
     text = (command or "").lstrip()
@@ -105,7 +115,7 @@ def run(command: str, ctx: Context | None = None) -> str | list:
         argv = _prefix_argv(line)
         if argv is None:
             return f"ERR could not parse command: {error}"
-    print(f"[run] {line[:160]!r}" + (f" +payload {len(payload)}c" if payload else ""), file=sys.stderr)
+    _log_run(line, payload)
     ws_token = set_workspace("")
     session_token = set_session(getattr(ctx, "session_id", "") if ctx is not None else "")
     set_payloads(payload if payload.strip() else None)
@@ -123,19 +133,9 @@ def main() -> None:
                         choices=("streamable-http", "sse", "stdio"))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8002)
-    parser.add_argument("--android-port", type=int, default=8765)
-    parser.add_argument("--android-pair", action="store_true")
     parser.add_argument("--path", default=os.environ.get("CODY_MCP_PATH", "/mcp"))
     arguments = parser.parse_args()
-    android_bridge.PORT["value"] = arguments.port
-    if arguments.android_pair:
-        for url in android_bridge.pairing_urls():
-            print(url)
-            print(android_bridge.pairing_code(url))
-        return
-    print(f"[android] pairing code: {android_bridge.pairing_code(android_bridge.pairing_urls()[0])}", file=sys.stderr)
     if arguments.transport == "stdio":
-        android_bridge.start_standalone(arguments.host, arguments.android_port)
         mcp.run(transport="stdio")
     else:
         mcp.run(transport=arguments.transport, host=arguments.host, port=arguments.port, path=arguments.path)

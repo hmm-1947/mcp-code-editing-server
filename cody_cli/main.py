@@ -13,7 +13,7 @@ from .code_cmds import (
     cmd_medit, cmd_sym, cmd_tree, cmd_undo, cmd_ws,
 )
 from .batch_cmds import cmd_batch
-from .android_cmds import cmd_android
+
 from .check_cmd import cmd_check
 from .err_cmds import cmd_err, record as record_failure
 
@@ -74,7 +74,6 @@ b     Playwright's own Chromium, NOT your installed browser (any playwright-cli 
       open/goto URL -errors: reply is just title + console errors/warnings (with text) instead of the snapshot.
       reload is errors-only by default (-full = snapshot). Refs (e5) reset on open/goto/reload: `b snapshot` again.
       b flags are single-dash too (-headed, -filename ...); cody turns them into playwright's --flags.
-android  phone control via accessibility tree; `android help` lists everything. e.g. android status | android screen | android tap 5 -screen | android type text=hi submit=1 | android open app=Chrome
 stats [N|reset]        output size per command
 TEXT FLAGS (-new -old -content -expect): inline values treat \\n \\t \\\\ as escapes.
 RAW MODE does NO escape processing (regexes and \\n in code are kept literally): put the text on the lines after
@@ -85,7 +84,7 @@ Workflow: find -files -> read PATH (outline) -> read -fn NAME -> edit -> check."
 COMMANDS = {
     "read": cmd_read, "find": cmd_find, "glob": cmd_glob, "tree": cmd_tree, "sym": cmd_sym,
     "edit": cmd_edit, "medit": cmd_medit, "new": cmd_new, "append": cmd_append, "rm": cmd_rm,
-    "undo": cmd_undo, "sh": cmd_sh, "proc": cmd_proc, "batch": cmd_batch, "check": cmd_check, "ws": cmd_ws, "b": cmd_browser, "graph": cmd_graph, "android": cmd_android, "err": cmd_err,
+    "undo": cmd_undo, "sh": cmd_sh, "proc": cmd_proc, "batch": cmd_batch, "check": cmd_check, "ws": cmd_ws, "b": cmd_browser, "graph": cmd_graph, "err": cmd_err,
 }
 
 

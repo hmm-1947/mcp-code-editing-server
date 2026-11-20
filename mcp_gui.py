@@ -11,6 +11,7 @@ Requires: pip install pystray pillow requests
 """
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -102,6 +103,23 @@ FG = "#e7e9ea"
 FG_DIM = "#9aa0a6"
 BORDER = "#34363a"
 RED = "#e06c75"
+LOG_BG_DEEP = "#14161a"
+LOG_TEXT = "#d7dae0"
+LOG_DIM = "#6b7280"
+LOG_GREEN = "#98c379"
+LOG_AMBER = "#e5c07b"
+LOG_RED = "#ef6b73"
+LOG_BLUE = "#61afef"
+LOG_CYAN = "#56b6c2"
+LOG_PURPLE = "#c678dd"
+LOG_CODE = "#c8d0dc"
+LOG_CODE_BG = "#1b1e24"
+LOG_GUTTER = "#3e4451"
+
+_RUN_RE = re.compile(r"^(?P<ws>--?ws\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s+)?(?P<verb>\S+)(?P<rest>.*)$")
+_ACCESS_RE = re.compile(
+    r'^INFO:\s+(?P<ip>\S+)\s+-\s+"(?P<method>[A-Z]+)\s+(?P<path>\S+)\s+HTTP/[\d.]+"\s+(?P<status>\d{3})(?P<tail>.*)$'
+)
 
 UI_FONT = "Segoe UI" if IS_WIN else "Helvetica Neue"
 UI_BOLD = "Segoe UI Semibold" if IS_WIN else "Helvetica Neue"
@@ -492,8 +510,10 @@ class App:
             bg=BG_LOG,
             fg=FG,
             insertbackground=FG,
-            font=(MONO_FONT, 9),
+            font=(MONO_FONT, 10),
             wrap="word",
+            spacing1=1,
+            spacing3=1,
             height=10,  # small requested height; the panel still expands to fill the window,
             borderwidth=0,  # and the footer (Copy URL / autostart) is never squeezed out
             padx=10,
@@ -505,8 +525,27 @@ class App:
         self.log_text.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        self.log_text.tag_configure("dim", foreground=FG_DIM)
+        mono = (MONO_FONT, 10)
+        mono_bold = (MONO_FONT, 10, "bold")
+        self.log_text.tag_configure("dim", foreground=LOG_DIM)
         self.log_text.tag_configure("accent", foreground=ACCENT)
+        self.log_text.tag_configure("ok", foreground=LOG_GREEN)
+        self.log_text.tag_configure("warn", foreground=LOG_AMBER)
+        self.log_text.tag_configure("err", foreground=LOG_RED)
+        self.log_text.tag_configure("method", foreground=LOG_BLUE, font=mono_bold)
+        self.log_text.tag_configure("args", foreground=LOG_TEXT)
+        self.log_text.tag_configure("ws", foreground=LOG_DIM)
+        self.log_text.tag_configure("verb", foreground=LOG_CYAN, font=mono_bold)
+        self.log_text.tag_configure(
+            "run_badge", foreground=LOG_BG_DEEP, background=LOG_BLUE, font=mono_bold
+        )
+        self.log_text.tag_configure("payload_head", foreground=LOG_PURPLE, font=mono_bold, spacing1=2)
+        self.log_text.tag_configure("payload_meta", foreground=LOG_DIM)
+        self.log_text.tag_configure("gutter", foreground=LOG_GUTTER, background=LOG_CODE_BG, lmargin2=30)
+        self.log_text.tag_configure(
+            "code", foreground=LOG_CODE, background=LOG_CODE_BG
+        )
+        self.log_text.tag_raise("sel")
 
         # footer: ngrok url + autostart checkbox
         footer = tk.Frame(self.root, bg=BG_PANEL, highlightbackground=BORDER, highlightthickness=1)
@@ -679,8 +718,8 @@ class App:
                     continue
                 buf = self.log_buffers[stream_name]
                 buf.append(line)
-                if len(buf) > 2000:
-                    del buf[: len(buf) - 2000]
+                if len(buf) > 20000:
+                    del buf[: len(buf) - 20000]
                 if self.current_stream.get() == stream_name:
                     self._append_log_line(line)
         except Empty:
@@ -694,13 +733,61 @@ class App:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
+    def _segments(self, line):
+        if line.startswith("  | "):
+            return [("  \u258f ", "gutter"), (line[4:], "code")]
+        if line.startswith("[payload]"):
+            return [("  \u25c6 payload", "payload_head"), (line[9:], "payload_meta")]
+        if line.startswith("[run] "):
+            body = line[6:]
+            match = _RUN_RE.match(body)
+            segs = [(" RUN ", "run_badge"), ("  ", None)]
+            if match:
+                segs.append((match.group("ws") or "", "ws"))
+                segs.append((match.group("verb"), "verb"))
+                segs.append((match.group("rest"), "args"))
+            else:
+                segs.append((body, "args"))
+            return segs
+        match = _ACCESS_RE.match(line)
+        if match:
+            status = int(match.group("status"))
+            status_tag = "ok" if status < 400 else ("warn" if status < 500 else "err")
+            return [
+                ("INFO ", "ok"),
+                (match.group("ip") + "  ", "dim"),
+                (match.group("method") + " ", "method"),
+                (match.group("path") + "  ", "args"),
+                (match.group("status"), status_tag),
+                (match.group("tail"), "dim"),
+            ]
+        if line.startswith("---"):
+            return [(line, "dim")]
+        if line.startswith("*"):
+            return [(line, "accent")]
+        upper = line.lstrip().upper()
+        if upper.startswith(("ERROR", "ERR ", "TRACEBACK", "CRITICAL", "EXCEPTION")) or "Traceback" in line:
+            return [(line, "err")]
+        if upper.startswith(("WARNING", "WARN")):
+            return [(line, "warn")]
+        if upper.startswith("INFO"):
+            head, _, rest = line.partition(":")
+            return [(head + ":", "ok"), (rest, "dim")]
+        if upper.startswith("DEBUG"):
+            return [(line, "dim")]
+        return [(line, None)]
+
+    def _insert_line(self, line):
+        if line.startswith("[run] ") and self.log_text.index("end-1c") != "1.0":
+            self.log_text.insert("end", "\n")
+        for text, tag in self._segments(line):
+            if text:
+                self.log_text.insert("end", text, (tag,) if tag else ())
+        self.log_text.insert("end", "\n")
+
     def _append_log_line(self, line):
         self.log_text.configure(state="normal")
-        tag = "dim" if line.startswith("---") else ("accent" if line.startswith("*") else None)
-        if tag:
-            self.log_text.insert("end", line + "\n", tag)
-        else:
-            self.log_text.insert("end", line + "\n")
+        self._insert_line(line)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
@@ -709,11 +796,7 @@ class App:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         for line in self.log_buffers[stream]:
-            tag = "dim" if line.startswith("---") else ("accent" if line.startswith("*") else None)
-            if tag:
-                self.log_text.insert("end", line + "\n", tag)
-            else:
-                self.log_text.insert("end", line + "\n")
+            self._insert_line(line)
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
